@@ -1,18 +1,16 @@
 ---
 layout:     post
-
-title:      "cron 学习"
+title:      "cron表达式 "
 description: "cron是在定时任务中很常用的一种表达式。"
 showonlyimage: false
 excerpt: "crontab命令常见于Unix和类Unix的操作系统之中，用于设置周期性被执行的指令。该命令从标准输入设备读取指令，并将其存放于“crontab”文件中，以供之后读取和执行。该词来源于希腊语chronos(χρόνος)，原意是时间。"
 author:     "zhouyang"
 date:     2021-01-04
-image: "https://img.zhaohuabing.com/in-post/2018-05-23-service_2_service_auth/background.jpg"
 published: true 
 tags:
     - cron
     - crontab
-categories: [ Tech ]    
+categories: [ tech ]    
 ---
 
 

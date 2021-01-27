@@ -41,4 +41,5 @@
 
 #searchResults .active {
     transform: scale(.98);
+    border: 2px solid var(--tertiary)
 }

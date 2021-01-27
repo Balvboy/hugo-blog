@@ -1,0 +1,135 @@
+baseURL: "https://balvboy.github.io"
+title: ZhouYang's Blog
+paginate: 10
+theme: papermod
+
+enableRobotsTXT: true
+buildDrafts: false
+buildFuture: false
+buildExpired: false
+
+googleAnalytics: UA-146899866-1
+disqusShortname: balvboy
+
+minify:
+    disableXML: true
+    minifyOutput: true
+
+params:
+    env: production # to enable google analytics, opengraph, twitter-cards and schema.
+    title: Life is Fantastic
+    description: "Life is Fantastic"
+    author: Me
+    # author: ["Me", "You"] # multiple authors
+    images: ["/img/z.jpg"]
+
+    defaultTheme: auto # dark, light
+    disableThemeToggle: false
+
+    ShowReadingTime: true
+    ShowShareButtons: true
+    disableSpecial1stPost: false
+    comments: true
+    hidemeta: false
+    showtoc: true
+    tocopen: true
+
+    assets:
+        # disableHLJS: true # to disable highlight.js
+        # disableFingerprinting: true
+        favicon: "/img/favicon.ico"
+        # favicon16x16: "<link / abs url>"
+        # favicon32x32: "<link / abs url>"
+        apple_touch_icon: "/img/favicon.ico"
+        safari_pinned_tab: "/img/favicon.ico"
+
+    label:
+        text: "Home"
+        icon: /img/zhouyang.png
+        iconHeight: 35
+
+    # profile-mode
+    profileMode:
+        enabled: true # needs to be explicitly set
+        title: Life is Fantastic
+        imageUrl: "/img/zhouyang.png"
+        imageWidth: 120
+        imageHeight: 120
+        imageTitle: iron man
+        buttons:
+            - name: Blogs
+              url: blog
+            - name: Tags
+              url: tags
+            - name: Categories
+              url: categories
+
+    # home-info mode
+    homeInfoParams:
+        Title: "Hi, I'm Zhou Yang"
+        Content: Welcome to my blog
+
+    socialIcons:
+        - name: github
+          url: "https://github.com/Balvboy"
+        - name: other
+          url: "wechat"
+        - name: email
+          url: "mailto:bravemanzhou@126.com"
+        
+
+    analytics:
+        google:
+            SiteVerificationTag: "XYZabc"
+
+    cover:
+        hidden: true # hide everywhere but not in structured data
+        hiddenInList: true # hide on list pages and home
+        hiddenInSingle: true # hide on single page
+
+    # for search
+    # https://fusejs.io/api/options.html
+    fuseOpts:
+        isCaseSensitive: false
+        shouldSort: true
+        location: 0
+        distance: 1000
+        threshold: 0.4
+        minMatchCharLength: 0
+        keys: ["title", "permalink", "summary", "content"]
+# 主页右上角分类设置
+menu:
+    main:
+        - identifier: blogs
+          name: blogs
+          url: /blog/
+          weight: 10
+        - identifier: tags
+          name: tags
+          url: /tags/
+          weight: 20
+        - identifier: categories
+          name: categories
+          url: /categories/
+          weight: 30
+        - identifier: search
+          name: search
+          url: /search/
+          weight: 40
+
+        
+        
+# Read: https://github.com/adityatelange/hugo-PaperMod/wiki/FAQs#using-hugos-syntax-highlighter-chroma
+# markup:
+#     highlight:
+#         # anchorLineNos: true
+#         codeFences: true
+#         guessSyntax: true
+#         lineNos: true
+#         # noClasses: false
+#         style: monokai
+outputs:
+    home:
+        - HTML
+        - RSS
+        - JSON # is necessary
