@@ -50,7 +50,7 @@ params:
 
     # profile-mode
     profileMode:
-        enabled: true # needs to be explicitly set
+        enabled: false # needs to be explicitly set
         title: Life is Fantastic
         imageUrl: "/img/zhouyang.png"
         imageWidth: 120
@@ -72,7 +72,7 @@ params:
     socialIcons:
         - name: github
           url: "https://github.com/Balvboy"
-        - name: other
+        - name: wechat
           url: "wechat"
         - name: email
           url: "mailto:bravemanzhou@126.com"
@@ -117,7 +117,7 @@ menu:
           url: /search/
           weight: 40
 
-        
+mermaid: true    
         
 # Read: https://github.com/adityatelange/hugo-PaperMod/wiki/FAQs#using-hugos-syntax-highlighter-chroma
 # markup:

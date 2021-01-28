@@ -60,13 +60,14 @@ Pre-Master-Secret前两个字节是TLS的版本号，这是一个比较重要的
 客户端和服务端在生成Master-Secret的之后，会把Master-Secret作为PRF的参数，继续运算，最终得到下面6个秘钥，分别用于MAC算法和加解密算法。
 
 |秘钥名称|秘钥作用|
-| --- | --- |
+| ---------- | ---------- |
 |client write MAC key|客户端对发送数据进行MAC计算使用的秘钥，服务端使用同样的秘钥确认数据的完整性|
 |server write MAC key|服务端对返回数据进行MAC计算使用的秘钥，客户端使用同一个秘钥验证完整性|
 |client write key|对称加密key，客户端数据加密，服务端解密|
 |server write key|服务端加密，客户端解密|
 |client write IV|初始化向量，运用于分组对称加密|
 |server write IV|初始化向量，运用于分组对称加密|
+
 
 参考: [TLS 中的密钥计算](https://halfrost.com/https-key-cipher/)
 
