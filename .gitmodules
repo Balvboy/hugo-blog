@@ -6,5 +6,5 @@
 	url = https://github.com.cnpmjs.org/jakewies/hugo-theme-codex.git
 [submodule "public"]
 	path = public
-	url = https://github.com.cnpmjs.org/Balvboy/balvboy.github.io.git
+	url = git@github.com:Balvboy/balvboy.github.io.git
 	branch = master
