@@ -209,8 +209,8 @@ Redis 选择使用单线程模型处理客户端的请求主要还是因为 CPU 
 # 参考
 [[Redis-Server 线程模型源码剖析]](https://blog.icorer.com/index.php/archives/389/)
 
-[为什么Redis使用单线程模型](https://draveness.me/whys-the-design-redis-single-thread)
+[[为什么Redis使用单线程模型]](https://draveness.me/whys-the-design-redis-single-thread)
 
-[Redis is single-threaded, then how does it do concurrent I/O?](https://stackoverflow.com/questions/10489298/redis-is-single-threaded-then-how-does-it-do-concurrent-i-o)
+[[Redis is single-threaded, then how does it do concurrent I/O?]](https://stackoverflow.com/questions/10489298/redis-is-single-threaded-then-how-does-it-do-concurrent-i-o)
 
-[为什么说Redis是单线程的以及Redis为什么这么快！](https://blog.csdn.net/xlgen157387/article/details/79470556)
+[[为什么说Redis是单线程的以及Redis为什么这么快！]](https://blog.csdn.net/xlgen157387/article/details/79470556)
