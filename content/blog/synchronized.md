@@ -2187,16 +2187,16 @@ void ObjectMonitor::exit(bool not_suspended, TRAPS) {
 - 在默认情况下,所有等待锁的线程，会先放到`_cxq`队列中，后来的会放到`_cxq`的头部。
 - 当之前持有锁的线程，执行完了同步代码，触发了锁退出逻辑。
 - 在默认QMode=0的情况下下，其他模式我们先不分析了，首先会判断EntryList是否不为空，如果不为空，则唤醒EntryList的头节点的线程。
-- 在首次重量级锁退出的时候，`EntryList`肯定为空，则会继续向下走，会把`_cxq`中的节点，转移到`_EntryList`中，并把修改为双向节点。(<span color='red'>可以知道，默认模式下，是在锁第一次释放的时候，把所有等待锁的节点移动到EntryList中</span>)
+- 在首次重量级锁退出的时候，`EntryList`肯定为空，则会继续向下走，会把`_cxq`中的节点，转移到`_EntryList`中，并把修改为双向节点。(<span style="color:red;">可以知道，默认模式下，是在锁第一次释放的时候，把所有等待锁的节点移动到EntryList中</span>)
 - 然后唤醒EntryList的头部节点。
 
-根据这个逻辑，表现在Java程序中。有 T1,T2,T3,T4 四个线程按顺序去获得锁，那么最终获得锁的顺序是。
+根据这个逻辑，表现在Java程序中。有 `T1`,`T2`,`T3`,`T4` 四个线程按顺序去获得锁，那么最终获得锁的顺序是。
 1. T1 
 2. T4 
 3. T3
 4. T2
 
-<span color='red'>T4是最后进来的线程会放在在cxq队列的头部，在T1释放的时候，会转移到EntryList的头部，然后首先被唤醒。</span>
+<span style="color:red;">T4是最后进来的线程会放在在cxq队列的头部，在T1释放的时候，会转移到EntryList的头部，然后首先被唤醒。</span>
 
 我们来验证一下
 
@@ -2302,9 +2302,479 @@ Thread 5 get lock!!!!!!
 
 ## wait、notify、natifyAll
 
+### wait
+
+我们知道调用 `lock.wait()`之后，当前持有锁的线程，就会丢掉锁，并进入阻塞状态，等到调用 `lock.notify()`的时候才会被唤醒
+下面我们来看源码来分析一下`wait`的实现原理。
+
+```c++
+int ObjectSynchronizer::wait(Handle obj, jlong millis, TRAPS) {
+  //如果使用偏向锁，首先撤销偏向。
+  //因为wait需要将线程放在ObjectMonitor的waitSet队列中，要wait必须要膨胀为重量级锁。
+  if (UseBiasedLocking) {
+    BiasedLocking::revoke_and_rebias(obj, false, THREAD);
+    assert(!obj->mark()->has_bias_pattern(), "biases should be revoked by now");
+  }
+  if (millis < 0) {
+    TEVENT(wait - throw IAX);
+    THROW_MSG_0(vmSymbols::java_lang_IllegalArgumentException(), "timeout value is negative");
+  }
+  //膨胀为重量级锁，如果已经是重量级锁， inflate方法会直接返回当前的ObjectMonitor
+  ObjectMonitor* monitor = ObjectSynchronizer::inflate(THREAD, obj());
+  DTRACE_MONITOR_WAIT_PROBE(monitor, obj(), THREAD, millis);
+  //调用ObjectMonitor的wait方法
+  monitor->wait(millis, true, THREAD);
+
+  // This dummy call is in place to get around dtrace bug 6254741.  Once
+  // that's fixed we can uncomment the following line, remove the call
+  // and change this function back into a "void" func.
+  // DTRACE_MONITOR_PROBE(waited, monitor, obj(), THREAD);
+  return dtrace_waited_probe(monitor, obj, THREAD);
+}
+
+```
+
+通过这个方法我们可以知道，如果是在偏向模式和轻量级模式的同步代码中调用了`wait()`方法，那么也会导致锁升级到重量级模式。
+
+然后就看`ObjectMonitor`的`wait`方法
+
+```c++
+void ObjectMonitor::wait(jlong millis, bool interruptible, TRAPS) {
+  Thread * const Self = THREAD;
+  assert(Self->is_Java_thread(), "Must be Java thread!");
+  JavaThread *jt = (JavaThread *)THREAD;
+
+  DeferredInitialize();
+
+  // Throw IMSX or IEX.
+  CHECK_OWNER();
+
+  EventJavaMonitorWait event;
+
+  // check for a pending interrupt
+  //检查是否被中断，中断了就就直接抛异常
+  if (interruptible && Thread::is_interrupted(Self, true) && !HAS_PENDING_EXCEPTION) {
+    // post monitor waited event.  Note that this is past-tense, we are done waiting.
+    if (JvmtiExport::should_post_monitor_waited()) {
+      // Note: 'false' parameter is passed here because the
+      // wait was not timed out due to thread interrupt.
+      JvmtiExport::post_monitor_waited(jt, this, false);
+
+      // In this short circuit of the monitor wait protocol, the
+      // current thread never drops ownership of the monitor and
+      // never gets added to the wait queue so the current thread
+      // cannot be made the successor. This means that the
+      // JVMTI_EVENT_MONITOR_WAITED event handler cannot accidentally
+      // consume an unpark() meant for the ParkEvent associated with
+      // this ObjectMonitor.
+    }
+    if (event.should_commit()) {
+      post_monitor_wait_event(&event, 0, millis, false);
+    }
+    TEVENT(Wait - Throw IEX);
+    THROW(vmSymbols::java_lang_InterruptedException());
+    return;
+  }
+
+  TEVENT(Wait);
+
+  assert(Self->_Stalled == 0, "invariant");
+  Self->_Stalled = intptr_t(this);
+  //设置当前线程等到的OObjectMonitor为当前的ObjectMonitor
+  jt->set_current_waiting_monitor(this);
+
+  // create a node to be put into the queue
+  // Critically, after we reset() the event but prior to park(), we must check
+  // for a pending interrupt.
+  //将当前线程封装成ObjectWaiter
+  ObjectWaiter node(Self);
+  node.TState = ObjectWaiter::TS_WAIT;
+  Self->_ParkEvent->reset();
+  OrderAccess::fence();          // ST into Event; membar ; LD interrupted-flag
+
+  // Enter the waiting queue, which is a circular doubly linked list in this case
+  // but it could be a priority queue or any data structure.
+  // _WaitSetLock protects the wait queue.  Normally the wait queue is accessed only
+  // by the the owner of the monitor *except* in the case where park()
+  // returns because of a timeout of interrupt.  Contention is exceptionally rare
+  // so we use a simple spin-lock instead of a heavier-weight blocking lock.
+
+   //获取一个SpinLock
+  Thread::SpinAcquire(&_WaitSetLock, "WaitSet - add");
+  //将当前线程添加到WaitSet队列的最后面
+  AddWaiter(&node);
+  //释放SpinLock
+  Thread::SpinRelease(&_WaitSetLock);
+
+  if ((SyncFlags & 4) == 0) {
+    _Responsible = NULL;
+  }
+  intptr_t save = _recursions; // record the old recursion count
+  _waiters++;                  // increment the number of waiters
+  _recursions = 0;             // set the recursion level to be 1
+  //释放锁对象
+  exit(true, Self);                    // exit the monitor
+  guarantee(_owner != Self, "invariant");
+
+  // The thread is on the WaitSet list - now park() it.
+  // On MP systems it's conceivable that a brief spin before we park
+  // could be profitable.
+  //
+  // TODO-FIXME: change the following logic to a loop of the form
+  //   while (!timeout && !interrupted && _notified == 0) park()
 
 
+  // 下面进入阻塞状态
+  // 如果调用的wait()，则使用park进入没有超时时间的阻塞
+  // 如果调用的wait(time),是使用park(time)进入有超时时间的阻塞
+  // 进入阻塞之后，有三种会被唤醒的情况
+  // 1. 阻塞时间到了
+  // 2. 线程被中断了
+  // 3. 线程被notify唤醒
+  int ret = OS_OK;
+  int WasNotified = 0;
+  { // State transition wrappers
+    OSThread* osthread = Self->osthread();
+    OSThreadWaitState osts(osthread, true);
+    {
+      ThreadBlockInVM tbivm(jt);
+      // Thread is in thread_blocked state and oop access is unsafe.
+      jt->set_suspend_equivalent();
 
+      if (interruptible && (Thread::is_interrupted(THREAD, false) || HAS_PENDING_EXCEPTION)) {
+        // Intentionally empty
+      } else if (node._notified == 0) {
+      // 根据入参 millis 判断是否有条件的挂起。这里挂起后，就不会继续往下执行了。
+      //除非timeout到时了，或者中断，或者notify/notifyAll
+        if (millis <= 0) {
+          Self->_ParkEvent->park();
+        } else {
+          ret = Self->_ParkEvent->park(millis);
+        }
+      }
+
+      // were we externally suspended while we were waiting?
+      if (ExitSuspendEquivalent (jt)) {
+        // TODO-FIXME: add -- if succ == Self then succ = null.
+        jt->java_suspend_self();
+      }
+
+    } // Exit thread safepoint: transition _thread_blocked -> _thread_in_vm
+
+    // Node may be on the WaitSet, the EntryList (or cxq), or in transition
+    // from the WaitSet to the EntryList.
+    // See if we need to remove Node from the WaitSet.
+    // We use double-checked locking to avoid grabbing _WaitSetLock
+    // if the thread is not on the wait queue.
+    //
+    // Note that we don't need a fence before the fetch of TState.
+    // In the worst case we'll fetch a old-stale value of TS_WAIT previously
+    // written by the is thread. (perhaps the fetch might even be satisfied
+    // by a look-aside into the processor's own store buffer, although given
+    // the length of the code path between the prior ST and this load that's
+    // highly unlikely).  If the following LD fetches a stale TS_WAIT value
+    // then we'll acquire the lock and then re-fetch a fresh TState value.
+    // That is, we fail toward safety.
+    //执行到这儿，说明park的线程，已经被唤醒了，可能是timeout到时了，或者中断，或者notify/notifyAll
+    //首先要将其从WaitSet队列中移除。因为要操作waitSet，所以也要先获取锁
+    if (node.TState == ObjectWaiter::TS_WAIT) {
+      Thread::SpinAcquire(&_WaitSetLock, "WaitSet - unlink");
+      if (node.TState == ObjectWaiter::TS_WAIT) {
+        DequeueSpecificWaiter(&node);       // unlink from WaitSet
+        assert(node._notified == 0, "invariant");
+        node.TState = ObjectWaiter::TS_RUN;
+      }
+      Thread::SpinRelease(&_WaitSetLock);
+    }
+
+    // The thread is now either on off-list (TS_RUN),
+    // on the EntryList (TS_ENTER), or on the cxq (TS_CXQ).
+    // The Node's TState variable is stable from the perspective of this thread.
+    // No other threads will asynchronously modify TState.
+    guarantee(node.TState != ObjectWaiter::TS_WAIT, "invariant");
+    OrderAccess::loadload();
+    if (_succ == Self) _succ = NULL;
+    //WasNotified用于判断，当前节点是否是通过notify唤醒的
+    WasNotified = node._notified;
+
+    // Reentry phase -- reacquire the monitor.
+    // re-enter contended monitor after object.wait().
+    // retain OBJECT_WAIT state until re-enter successfully completes
+    // Thread state is thread_in_vm and oop access is again safe,
+    // although the raw address of the object may have changed.
+    // (Don't cache naked oops over safepoints, of course).
+
+    // post monitor waited event. Note that this is past-tense, we are done waiting.
+    if (JvmtiExport::should_post_monitor_waited()) {
+      JvmtiExport::post_monitor_waited(jt, this, ret == OS_TIMEOUT);
+
+      if (node._notified != 0 && _succ == Self) {
+        // In this part of the monitor wait-notify-reenter protocol it
+        // is possible (and normal) for another thread to do a fastpath
+        // monitor enter-exit while this thread is still trying to get
+        // to the reenter portion of the protocol.
+        //
+        // The ObjectMonitor was notified and the current thread is
+        // the successor which also means that an unpark() has already
+        // been done. The JVMTI_EVENT_MONITOR_WAITED event handler can
+        // consume the unpark() that was done when the successor was
+        // set because the same ParkEvent is shared between Java
+        // monitors and JVM/TI RawMonitors (for now).
+        //
+        // We redo the unpark() to ensure forward progress, i.e., we
+        // don't want all pending threads hanging (parked) with none
+        // entering the unlocked monitor.
+        node._event->unpark();
+      }
+    }
+
+    if (event.should_commit()) {
+      post_monitor_wait_event(&event, node._notifier_tid, millis, ret == OS_TIMEOUT);
+    }
+
+    OrderAccess::fence();
+
+    assert(Self->_Stalled != 0, "invariant");
+    Self->_Stalled = 0;
+
+    assert(_owner != Self, "invariant");
+    //要继续执行，必须重新获取锁才可以，这里就是重新获取锁的逻辑。
+    //是经过了一定的阻塞时间，自己唤醒的，那么需要重新尝试获取锁，通过enter方法。
+    ObjectWaiter::TStates v = node.TState;
+    if (v == ObjectWaiter::TS_RUN) {
+      enter(Self);
+    } else {
+      guarantee(v == ObjectWaiter::TS_ENTER || v == ObjectWaiter::TS_CXQ, "invariant");
+      ReenterI(Self, &node);
+      node.wait_reenter_end(this);
+    }
+
+    // Self has reacquired the lock.
+    // Lifecycle - the node representing Self must not appear on any queues.
+    // Node is about to go out-of-scope, but even if it were immortal we wouldn't
+    // want residual elements associated with this thread left on any lists.
+    guarantee(node.TState == ObjectWaiter::TS_RUN, "invariant");
+    assert(_owner == Self, "invariant");
+    assert(_succ != Self, "invariant");
+  } // OSThreadWaitState()
+   //执行到这儿，说明线程被唤醒，并且重新获取了锁。
+   //设置当前线程wait的Monitor为NULL
+  jt->set_current_waiting_monitor(NULL);
+
+  guarantee(_recursions == 0, "invariant");
+  _recursions = save;     // restore the old recursion count
+  _waiters--;             // decrement the number of waiters
+
+  // Verify a few postconditions
+  assert(_owner == Self, "invariant");
+  assert(_succ != Self, "invariant");
+  assert(((oop)(object()))->mark() == markOopDesc::encode(this), "invariant");
+
+  if (SyncFlags & 32) {
+    OrderAccess::fence();
+  }
+
+  // check if the notification happened
+  //是否是notify唤醒的，如果不是，判断如果是中断，需要抛出中断异常
+  //判断是否是中断唤醒，如果是抛出中断异常
+  if (!WasNotified) {
+    // no, it could be timeout or Thread.interrupt() or both
+    // check for interrupt event, otherwise it is timeout
+    if (interruptible && Thread::is_interrupted(Self, true) && !HAS_PENDING_EXCEPTION) {
+      TEVENT(Wait - throw IEX from epilog);
+      THROW(vmSymbols::java_lang_InterruptedException());
+    }
+  }
+}
+
+```
+
+`wait`方法的主要逻辑是
+
+1. 将线程封装成ObjectWaiter。
+2. 添加到`WaitSet`队列，WaitSet是一个双向循环队列，将其添加到了队列的末尾。(操作`WaitSet`的时候，都需要获得一个`SpinLock`)
+3. 调用exit方法释放锁，exit是退出synchronized的逻辑，详细可看synchronized实现原理
+4. 将线程挂起，这里挂起根据入参millis进行了有条件的挂起（是否到时间自动唤醒）。挂起之后，线程就不再执行了，必须等待当前线程被唤醒才会继续执行。
+  - 线程被唤醒有三种情况：
+  - 到时间自动唤醒，
+  - 中断唤醒，
+  - notify/notifyAll唤醒( <span style="color:red;">这里准确来说是，notify之后，被移动到了`cxq`队列，然后在`exit`的逻辑中获取到了锁，被唤醒</span>)。
+5. 唤醒之后从WaitSet中移除。
+6. 判断是怎么唤醒的
+  - 自己到时间唤醒，调用`enter`重新尝试获取锁
+  - `notify`唤醒,
+  - 中断唤醒，抛出中断异常。
+
+
+### notify
+根据java中关于notify的注释中说，notify会随机挑选一个处于阻塞状态的线程唤醒。那真的是随机吗？
+下面我们根据看源码来分析一下。
+
+```c++
+void ObjectSynchronizer::notify(Handle obj, TRAPS) {
+  //如果使用偏向，先撤销偏向
+  if (UseBiasedLocking) {
+    BiasedLocking::revoke_and_rebias(obj, false, THREAD);
+    assert(!obj->mark()->has_bias_pattern(), "biases should be revoked by now");
+  }
+  //判断如果是轻量级锁，直接返回
+  markOop mark = obj->mark();
+  if (mark->has_locker() && THREAD->is_lock_owned((address)mark->locker())) {
+    return;
+  }
+  //获取重量级锁的ObjectMonitor并执行其notify方法
+  ObjectSynchronizer::inflate(THREAD, obj())->notify(THREAD);
+}
+
+```
+
+首先和`wait`一样，在调用`notify`后，也肯定会升级到重量级锁。
+
+```c++
+void ObjectMonitor::INotify(Thread * Self) {
+  //获取notify策略，默认为2
+  const int policy = Knob_MoveNotifyee;
+
+  Thread::SpinAcquire(&_WaitSetLock, "WaitSet - notify");
+  //取出 waitSet的头结点
+  ObjectWaiter * iterator = DequeueWaiter();
+  if (iterator != NULL) {
+    // Disposition - what might we do with iterator ?
+    // a.  add it directly to the EntryList - either tail (policy == 1)
+    //     or head (policy == 0).
+    // b.  push it onto the front of the _cxq (policy == 2).
+    // For now we use (b).
+    if (policy != 4) {
+      iterator->TState = ObjectWaiter::TS_ENTER;
+    }
+    //设置线程是通过notify唤醒
+    iterator->_notified = 1;
+    iterator->_notifier_tid = Self->osthread()->thread_id();
+
+    ObjectWaiter * list = _EntryList;
+    //下面根据不同的策略进行唤醒。
+    if (policy == 0) {       // prepend to EntryList
+      //添加到EntryList队列的队首
+      if (list == NULL) {
+        iterator->_next = iterator->_prev = NULL;
+        _EntryList = iterator;
+      } else {
+        list->_prev = iterator;
+        iterator->_next = list;
+        iterator->_prev = NULL;
+        _EntryList = iterator;
+      }
+    } else if (policy == 1) {      // append to EntryList
+       //添加到EntryList队列的队尾
+      if (list == NULL) {
+        iterator->_next = iterator->_prev = NULL;
+        _EntryList = iterator;
+      } else {
+        // CONSIDER:  finding the tail currently requires a linear-time walk of
+        // the EntryList.  We can make tail access constant-time by converting to
+        // a CDLL instead of using our current DLL.
+        ObjectWaiter * tail;
+        for (tail = list; tail->_next != NULL; tail = tail->_next) /* empty */;
+        assert(tail != NULL && tail->_next == NULL, "invariant");
+        tail->_next = iterator;
+        iterator->_prev = tail;
+        iterator->_next = NULL;
+      }
+    } else if (policy == 2) {      // prepend to cxq
+      //添加到CXQ队列的队首
+      if (list == NULL) {
+        iterator->_next = iterator->_prev = NULL;
+        _EntryList = iterator;
+      } else {
+        iterator->TState = ObjectWaiter::TS_CXQ;
+        for (;;) {
+          ObjectWaiter * front = _cxq;
+          iterator->_next = front;
+          if (Atomic::cmpxchg_ptr(iterator, &_cxq, front) == front) {
+            break;
+          }
+        }
+      }
+    } else if (policy == 3) {      // append to cxq
+       //添加CXQ队列的队尾
+      iterator->TState = ObjectWaiter::TS_CXQ;
+      for (;;) {
+        ObjectWaiter * tail = _cxq;
+        if (tail == NULL) {
+          iterator->_next = NULL;
+          if (Atomic::cmpxchg_ptr(iterator, &_cxq, NULL) == NULL) {
+            break;
+          }
+        } else {
+          while (tail->_next != NULL) tail = tail->_next;
+          tail->_next = iterator;
+          iterator->_prev = tail;
+          iterator->_next = NULL;
+          break;
+        }
+      }
+    } else {
+      ParkEvent * ev = iterator->_event;
+      iterator->TState = ObjectWaiter::TS_RUN;
+      OrderAccess::fence();
+      ev->unpark();
+    }
+
+    // _WaitSetLock protects the wait queue, not the EntryList.  We could
+    // move the add-to-EntryList operation, above, outside the critical section
+    // protected by _WaitSetLock.  In practice that's not useful.  With the
+    // exception of  wait() timeouts and interrupts the monitor owner
+    // is the only thread that grabs _WaitSetLock.  There's almost no contention
+    // on _WaitSetLock so it's not profitable to reduce the length of the
+    // critical section.
+
+    if (policy < 4) {
+      iterator->wait_reenter_begin(this);
+    }
+  }
+  Thread::SpinRelease(&_WaitSetLock);
+}
+
+```
+
+这里我们看到这个逻辑就比较简单了，就是从`waitSet`中取出头节点，然后根据策略，放到`cxq`或者`entryList`的不同位置。
+根据不同的唤醒策略进行不同的操作：
+
+  - policy == 0 ： 取出`WaitSet`的队首元素，添加到`EntryList`队列的队首。
+  - policy == 1 ： 取出`WaitSet`的队首元素，添加到`EntryList`队列的队尾
+  - policy == 2 ： 取出`WaitSet`的队首元素，添加到`CXQ`队列的队首(<span style="color:red;">默认策略</span>)
+  - policy == 3 ： 取出`WaitSet`的队首元素，添加`CXQ`队列的队尾
+
+我们可以看到，`notify`方法并没有真正的去唤醒阻塞线程，只是把线程从`waitSet`移动到了`cxq`的头部，然后等待其他线程释放重量级锁之后，在`exit`方法中，真正的唤醒。
+
+
+### notifyAll
+
+```c++
+
+void ObjectMonitor::notifyAll(TRAPS) {
+  CHECK_OWNER();
+  if (_WaitSet == NULL) {
+    TEVENT(Empty-NotifyAll);
+    return;
+  }
+
+  DTRACE_MONITOR_PROBE(notifyAll, this, object(), THREAD);
+  int tally = 0;
+  while (_WaitSet != NULL) {
+    tally++;
+    INotify(THREAD);
+  }
+
+  OM_PERFDATA_OP(Notifications, inc(tally));
+}
+
+```
+
+上面看完`notify`，在看`notifyAll`就比较简单了。他是循环调用了`notify`方法，也就是把`waitSet`中的所有节点都添加到了`cxq`的头部。
+
+
+# 其他知识点(瞎写的)
 
 ## 安全点
 安全点的官方定义是在程序执行期间的所有GC Root已知并且所有堆对象的内容一致的点。
@@ -2315,14 +2785,21 @@ Thread 5 get lock!!!!!!
 - 批量撤销
 - CMS中的某些步骤
 
+当然这里只是简单的提一下。
 
-在JVM中，每种需要VMThread执行的操作都被封装成了单独的类型。然后把需要执行的逻辑放在doit方法中，比如批量偏向撤销操作就被封装成了`VM_RevokeBias`。
 
-```
- // VM 线程执行偏向锁撤销？
-VM_RevokeBias revoke(&obj, (JavaThread*) THREAD);
-VMThread::execute(&revoke);
-return revoke.status_code();
+## jvm线程如何执行任务
+
+在JVM中，每种需要VMThread执行的操作都被封装成了VM_Operation。然后具体的任务继承`VM_Operation`,然后把需要执行的逻辑放在doit方法中，比如批量向撤销操作就被封装成了`VM_BulkRevokeBias`。
+
+在上面的`revoke_and_bias`代码中，执行安全点偏向撤销的代码：
+
+```c++
+VM_BulkRevokeBias bulk_revoke(&obj, (JavaThread*) THREAD,
+                                (heuristics == HR_BULK_REBIAS),
+                                attempt_rebias);
+  VMThread::execute(&bulk_revoke);
+  return bulk_revoke.status_code();
 ```
 
 他在doit方法中执行的逻辑是
@@ -2348,9 +2825,6 @@ enum Mode {
     _async_safepoint // non-blocking,safepoint, vm_op C-Heap allocated
   };
 ```
-
-
-具体什么时候会触发安全点，由JVM来决定。
 
 
 ## JVM中使用的CAS方法
@@ -2383,27 +2857,12 @@ if (Atomic::cmpxchg_ptr((void*)new_header, lockee->mark_addr(), header) == heade
 * 根据上面的代码，的意思就是，如果锁对象的对象头的值为匿名偏向状态，那么把锁对象的对象头修改为偏向当前线程的对象头
 
 
-# 偏向锁过程
-1. 首先根据对象头的后三位判断该是不是处于偏向锁状态
-    1. 如果是不是偏向状态则走轻量级锁流程
-    2. 如果是偏向状态。
-        1. 则拿到锁对象头中偏向的线程ID，判断是不是当前的这个线程。
-            1. 如果是则不需要任何处理，认为获取锁成功
-        2. 判断锁对象所属的类中的偏向锁是否开启
-            1. 如果没有开启，则执行偏向锁撤销
-        3. 判断锁对象的epoch和所属类型的epoch是否相同 
-            1. 如果不同，则尝试重偏向,因为标明已经发生过批量重偏向了。
-                1. 如果偏向失败则进行锁升级
-        4. 这时候通过CAS，把当前线程的ThreadID设置到锁对象头中。（走到这一步说明要么是匿名偏向状态，要么偏向其他线程）
-            1. 如果设置成功，表示获取偏向锁成功
-            2. 如果设置失败，表示已经排向了其他线程，则进行锁升级。
-
-
-
 # 参考文章
 [[java-并发之基石篇]](https://createchance.github.io/post/java-%E5%B9%B6%E5%8F%91%E4%B9%8B%E5%9F%BA%E7%9F%B3%E7%AF%87/#inflate-%E6%88%90%E4%B8%BA%E9%87%8D%E9%94%81)
 
 [[死磕Synchronized底层实现]](https://github.com/farmerjohngit/myblog/issues/12)
 
 [[从源码分析Synchronized实现原理]](https://blog.csdn.net/b_x_p/article/details/103376678)
+
+[[Wait与notify/notifyAll源码分析]](https://blog.csdn.net/b_x_p/article/details/103980515)
 
