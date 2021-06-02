@@ -829,3 +829,5 @@ Duration: 1953
 [[为什么volatile注释变量，对其下面的变量也会有影响？]](https://www.zhihu.com/question/348513270)
 
 [[一次深入的volatile研究]](https://createchance.github.io/post/%E4%B8%80%E6%AC%A1%E6%B7%B1%E5%85%A5%E9%AA%A8%E9%AB%93%E7%9A%84-volatile-%E7%A0%94%E7%A9%B6/)
+
+[[既然CPU有缓存一致性协议（MESI），为什么JMM还需要volatile关键字？]](https://www.zhihu.com/question/296949412)
