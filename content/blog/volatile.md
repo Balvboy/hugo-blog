@@ -341,6 +341,7 @@ operation is called “cache locking.” The cache coherency mechanism automatic
 - 8.2.3.4 Loads May Be Reordered with Earlier Stores to Different Locations
 
 意思是
+
 - `load`指令和`store`指令，都不能喝同类型的指令之间发生重排序，也就是 load1,load2 和 store1，store2 是不会发生重排序的
 - `store`指令和前面出现的`load`指令，不会重排序，也就是 load1,store2 不会发生重排序。
 - `load`指令，和它前面出现的`store`指令之间可能会发生重排序。
@@ -357,7 +358,7 @@ operation is called “cache locking.” The cache coherency mechanism automatic
 |PowerPC	|Y|	Y|	Y|	Y|	N|
 |ia64	|Y|	Y|	Y|	Y|	N|
 
-我们看到，x86在`loadload`,`loadStore`.`storestore` 和有数据依赖的时候不会发生重排序。
+我们看到，x86在`loadload`,`loadStore`,`storestore` 和有数据依赖的时候不会发生重排序。
 另外两种平台，只有在有数据依赖的时候不会发生重排序。
 
 所以JVM需要根据不同平台来进行不同的处理。
@@ -540,6 +541,9 @@ CPU1 需要写入数据X
 另外说一下，x86的CPU不含有 `invalidate queue`,这也是上面提到的，x86平台下只有`storeload`会发生重排序的原因。
 
 
+
+
+
 ## 乱序执行/重排序
 
 了解完上面的这些知识，我们再来整体的总结一下乱序执行或者说重排序的问题。
@@ -582,6 +586,18 @@ CPU接受到编译器编译的指令，通常为了为了提高`CPU流水线的�
 	- 关于`StoreBuffer`和 `Invalidate Queue`引起的乱序稍微复杂一点，就不在这里展开了，有兴趣的同学可以查看 [Why Memory Barriers](https://blog.csdn.net/reliveIT/article/details/105902477?spm=1001.2014.3001.5501)
 
 同样上面的这些乱序，都是能够保证在单线程的情况下执行结果的正确行。在多线程环境下，如果需要保证有序，那就需要开发者使用CPU提供的`内存屏障`指令，或者带有内存屏障作用的其他指令，来告诉CPU不要进行乱序执行了。
+
+
+
+## volatile作用总结
+上面我们对volatile涉及到相关之后都了解了一下，下面对再对volatile的作用做一下总结。
+
+1. 可以防止编译器的重排序优化，会禁止编译器对操作volatile变量的上下两部分代码段进行重排序。
+2. 可以防止CPU的重排序优化
+  - 使用volatile之后，在某些硬件平台下，会使用内存屏障，防止CPU进行指令重排序，使用内存屏障后，就算是没有相关性的指令，CPU也不会进行排序
+3. 可以保证变量在线程之间的可见性
+  - 我们上面了解到，在MESI协议之外，有些处理器还有Store Buffer，这就会导致虽然有缓存一致性协议，但是并不能实时生效，所以还是没有办法保证可见性。当使用了volatile之后，使用了内存屏障指令之后，会强制处理器清空Store Buffer，这样就能保证每次操作volatile之后，缓存一致性协议立即生效，这样就能够保证了可见性。
+
 
 
 ## 伪共享问题
@@ -793,8 +809,6 @@ Duration: 1953
 
 
 
-
-### @sun.misc.Contended注解
 
 
 
