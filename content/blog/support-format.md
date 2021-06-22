@@ -2,14 +2,13 @@
 layout:     post
 title:      "格式测试 "
 description: "格式测试"
-showonlyimage: false
+header_image: /img/zhouyang.png
 excerpt: "格式测试"
 author:     "zhouyang"
 date:     2021-01-28
-published: true 
 tags:
-    - 格式
-categories: [ tech ]  
+    - format
+categories: [ format ]  
 draft: true  
 mermaid: true
 

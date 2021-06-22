@@ -150,4 +150,6 @@ JVM规定
 # 参考
 
 [JVM 基础 - Java 内存模型详解](https://www.pdai.tech/md/java/jvm/java-jvm-jmm.html#happens-before)
+[Java 内存模型（Java Memory Model）](https://note.youdao.com/ynoteshare1/index.html?id=6ac7397bf1fd90982b89f5510e80be79&type=note)
+[全面理解Java内存模型(JMM)及volatile关键字](https://blog.csdn.net/javazejian/article/details/72772461)
 

@@ -8,6 +8,8 @@ date:     2021-05-21
 published: true 
 tags:
     - volatile
+    - 内存屏障
+    - Lock指令
 categories: [ tech ]  
 mermaid: true
 
