@@ -21,7 +21,7 @@ params:
     description: "Life is Fantastic"
     author: Me
     # author: ["Me", "You"] # multiple authors
-    images: ["/img/z.jpg"]
+    images: ["/img/z.png"]
 
     defaultTheme: auto # dark, light
     disableThemeToggle: false
@@ -76,7 +76,7 @@ params:
           url: "wechat"
         - name: email
           url: "mailto:bravemanzhou@126.com"
-        
+
 
     analytics:
         google:
@@ -117,8 +117,8 @@ menu:
           url: /search/
           weight: 40
 
-mermaid: true    
-        
+mermaid: true
+
 # Read: https://github.com/adityatelange/hugo-PaperMod/wiki/FAQs#using-hugos-syntax-highlighter-chroma
 # markup:
 #     highlight:
