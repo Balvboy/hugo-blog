@@ -38,7 +38,7 @@ private volatile int state;
 ## 同步队列
 AQS使用一个Volatile的int类型的成员变量`state`来表示同步状态，通过内置的FIFO同步队列来完成资源获取的排队工作。
 
-![](/img/queue.png)
+![](/img/clhqueue.webp)
 
 <span style="color:red;">有一点值得注意，就是这里的头结点是一个虚节点，它的thread为空，头结点的存在更多意义上是为了编程方便。当然为了方便理解，我们可以认为头结点就是获取了锁的线程的节点，但是thread被清空了</span>
 
@@ -530,6 +530,8 @@ public class FairVsNonFairLock {
 
 下面我们一个方法一个方法的分析，先来看`acquire()`。
 
+## 加锁逻辑
+
 ### acquire方法
 
 ```java
@@ -561,7 +563,7 @@ public final void acquire(int arg) {
   - 如果返回true则表示线程在获取锁过程中被调用过中断，则需要调用`selfInterrupt()`重新中断一下自己，把中断状态传传出来
   - 如果返回false则表示没有被调用过中断。
 
-### addWaiter()方法封装线程为Node节点
+### addWaiter封装线程为Node节点
 
 ```java
 /**
@@ -602,7 +604,10 @@ public final void acquire(int arg) {
   - <span style="color:red;">这里有一点需要注意，就是快速入队的时候，是先设置的`node.prev = pred`,然后在设置的`pred.next = node`，包括enq里面的操作也是，这里是有原因的，下面我们会详细的分析一下</span>
 - 如果快速入队失败，则调用`enq(node)`,执行完整的入队操作
 
-### enq()进行完成入队逻辑
+### enq完整入队
+我们说他是一个完整入队逻辑的原因是，它在for循环里，执行CAS操作，直到成功加入队列才会跳出循环
+
+这种操作也叫做 `slow path`
 
 ```java
 /**
@@ -637,7 +642,9 @@ private Node enq(final Node node) {
 - <span style="color:red;">所以，头结点是被第二个获取锁的线程，获取锁失败的时候，创建的。</span>
 
 
-### acquireQueued在等待队列中获取锁
+### acquireQueued方法
+
+这个方法就是线程等待队列中获取锁，在这个方法中，线程会不断的进行`尝试获取->挂起->唤醒->尝试获取`知道获得锁
 
 ```java
 /**
@@ -662,6 +669,7 @@ final boolean acquireQueued(final Node node, int arg) {
                 //把之前的头结点踢出等待队列
                 p.next = null; // help GC
                 failed = false;
+                //获取锁成功之后，返回中断状态
                 return interrupted;
             }
             //如果没有资格获取锁，或者获取锁失败
@@ -675,7 +683,9 @@ final boolean acquireQueued(final Node node, int arg) {
             //然后在等到这个线程获取到锁的时候，会把这个中断状态传出去
             //这里使用到的一个特性就是，被park挂起的线程，当线程中断的时候不会抛出线程中断异常
             if (shouldParkAfterFailedAcquire(p, node) &&
+                //如果返回true，表示是被中断唤醒的
                 parkAndCheckInterrupt())
+                //记录中断状态
                 interrupted = true;
         }
     } finally {
@@ -695,6 +705,9 @@ final boolean acquireQueued(final Node node, int arg) {
   - 并踢掉之前的头结点
   - 并返回线程的中断状态，记录线程在获取锁的过程中，有没有被中断过。
 - 如果不是第二个节点，或者`tryAcquire`失败，会调用`shouldParkAfterFailedAcquire`,判断线程是否应该挂起。
+
+### shouldParkAfterFailedAcquire方法
+在这个方法中，会根据节点的状态判断线程是否要被挂起,并在某些情况下修改前置节点状态
 
 ```Java
 /**
@@ -749,30 +762,233 @@ private static boolean shouldParkAfterFailedAcquire(Node pred, Node node) {
 ```
 
 - 首先拿到当前节点的前置节点的`waitStatus`,然后开始判断
-- 如果`waitStatus`是`SIGNAL`状态,则返回true，表示可以挂起，下面的逻辑都会返回false，表示不会挂起。
+- 如果`waitStatus`是`SIGNAL`状态,则返回true，`表示新加入的节点已经告诉了他的前置节点，当前置节点释放的时候唤醒他，他可以放心的挂起了;`下面的逻辑都会返回false，表示不会挂起。
 - 如果`waitStatus`大于0，也就是`CANCELLED`状态，表示当前节点的前置节点已经被取消了，那么将这个前置节点踢出等待队列
 - 并会把前面所有的连续的`CANCELLED`状态的节点都踢出队列
 - 如果`waitStatus`不大于0，那么则`waitStatus`是0,或者`PROPAGATE`，那么就把它设置为`SIGNAL`状态，这样会再次尝试获取一次,如果仍然没有获取到，则会在下次判断`shouldParkAfterFailedAcquire`的时候，因为前置节点是`SIGNAL`而挂起。
 
-这里的重点是对于`SIGNAL`状态的理解，我们再来看一下官方的解释
+这里的重点是对于`SIGNAL`状态的理解，我们再来看一下Java的解释，Java的解释有三个地方
+
+![](/img/signal.png)
+
+![](/img/signal2.png)
+
+![](/img/waitQueue.png)
+
+最后一张图片的注释中提到，AQS中使用和CLH相同的策略，在节点中保存一个后置节点的控制信息。当一个节点的前置节点被释放的时候，通知它的后置节点。
+`只有SIGNAL状态表示的是对后置节点的操作，其他状态都是表示的本身节点的状态`
+
+ 上面提到，一个节点的`waitStatus`设置为`SIGNAL`，表示的是这个节点的后置节点正在或者将要被阻塞，也可以理解为这个节点的后置节点等待它前面节点唤醒(这个更符合`SIGNAL`的定义)。
+ - 所以说，一个节点的处于`SIGNAL`状态，表示的是，当这个节点被释放的时候，需要唤醒它的后续节点。
+ - 那么既然这个状态会指导对后置节点的操作，所以这个状态的变更也应该有后置节点来触发。
+ - 所以每个节点的初始状态都是0，当有后置节点加入队列的时候，会在后置节点执行`shouldParkAfterFailedAcquire`的时候，把这个节点的状态修改为`SIGNAL`
+
+
+### parkAndCheckInterrupt挂起并检查中断状态
+当经过上面的方法判断，线程需要被挂起，就会执行这个方法，使用`LockSupport.park()`挂起当前线程。
+
 ```java
-/** waitStatus value to indicate successor's thread needs unparking */
-static final int SIGNAL    = -1;
-
-
-/**
-SIGNAL:   The successor of this node is (or will soon be)
-          blocked (via park), so the current node must
-          unpark its successor when it releases or
-          cancels. To avoid races, acquire methods must
-          first indicate they need a signal,
-          then retry the atomic acquire, and then,
-          on failure, block.
-*/
+//当线程被unpark()唤醒，或者被终端的时候返回当前线程的中断状态
+//使用park()挂起的一个特点就是，当调用线程的中断方法时，不会抛出中断异常，同时也会保留线程的中断状态
+private final boolean parkAndCheckInterrupt() {
+    LockSupport.park(this);
+    //这里注意一下，如果是通过调用线程interrupt方法唤醒了挂起的线程。
+    //这里调用的是 interrupted(),这个方法的作用是，返回当前线程的中断状态，然后清除掉中断状态，
+    //这里为什么必须要清除中断状态呢？
+    //因为线程被唤醒之后，需要再次去尝试获取锁，但是并不能保证肯定成功，如果失败了，还需要继续挂起。
+    //如果这里不清除中断状态，那么下次获取失败，需要再次挂起的时候，因为线程有中断状态，所以LockSuport.park()会失效，则导致线程无法挂起。
+    return Thread.interrupted();
+}
 
 ```
 
+- 线程被挂起后就会停在这行代码，等待被唤醒后继续向下执行。
+- 线程被唤醒后，继续执行`return Thread.interrupted();`,返回当前线程的中断状态，然后清除掉中断状态。
+- 所以如果线程是被中断方法唤醒的，`parkAndCheckInterrupt()`方法就会返回true，然后在`acquireQueued()`方法中就会执行`interrupted = true;`记录下来中断状态。
+- 然后在线程成功获得锁之后，将记录的中断状态返回出去。
 
+
+## 释放锁逻辑
+
+### release方法释放锁
+
+当调用`lock.unlock()`方法释放锁时，会调用`AQS`的`release()`方法。
+
+```Java
+/**
+ * Releases in exclusive mode.  Implemented by unblocking one or
+ * more threads if {@link #tryRelease} returns true.
+ * This method can be used to implement method {@link Lock#unlock}.
+ *
+ * @param arg the release argument.  This value is conveyed to
+ *        {@link #tryRelease} but is otherwise uninterpreted and
+ *        can represent anything you like.
+ * @return the value returned from {@link #tryRelease}
+ *
+ */
+public final boolean release(int arg) {
+    //tryRelease，尝试释放
+    //这里如果返回false，则表示发生了锁重入，这里只是释放了里层的，外层仍然还在持有锁
+    //如果返回true，则表示所有的重入都已经被释放了，可以唤醒下面的等待线程了
+    if (tryRelease(arg)) {
+        Node h = head;
+        //如果有head不为null，则表示至少有一个线程进入过等待队列，因为head节点是在后面线程进入等待队列的时候初始化的
+        //h.waitStatus != 0,为什么要加这个判断呢?
+        //因为waitStatus=0，是一个节点的初始状态，如果头结点处于这个状态，说明要么后面加入的线程还在执行中，没有执行到 shouldParkAfterFailedAcquire方法中的compareAndSetWaitStatus
+        //要么就是后面的线程在执行到 shouldParkAfterFailedAcquire()方法之前，已经超时了
+        //这两种情况都不需要唤醒
+        //第一种线程正在执行的情况，后面的线程会在第二次循环的时候tryAcquire(),能够拿到锁
+        if (h != null && h.waitStatus != 0)
+            unparkSuccessor(h);
+        return true;
+    }
+    return false;
+}
+
+```
+1.首先调用`Sync.tryRelease()`方法，尝试释放锁
+
+```java
+//尝试释放锁
+protected final boolean tryRelease(int releases) {
+
+    int c = getState() - releases;
+    if (Thread.currentThread() != getExclusiveOwnerThread())
+        throw new IllegalMonitorStateException();
+    boolean free = false;
+    //如通c == 0，表示所有的锁都释放完了
+    //则设置持有锁线程为null
+    //返回释放锁成功
+    if (c == 0) {
+        free = true;
+        setExclusiveOwnerThread(null);
+    }
+    //如果c != 0 则表示发生了锁重入，只是里层释放了锁
+    //返回没有完全释放锁
+    setState(c);
+    return free;
+}
+
+```
+这里主要处理了一个重入的逻辑，只有所有重入的锁都释放完毕了，才返回true。
+`值得注意的是，这个tryRelease()方法是写在Sync这个类中的，而不是FairSycn和NonFairSync，也就可以说明公平锁和非公平锁的释放逻辑是完全相同的`。
+
+2.`tryRelease()`返回true，则需要判断是否需要唤醒后面的节点。
+
+我们来看这里的判断条件
+
+```java
+Node h = head;
+if (h != null && h.waitStatus != 0)
+    unparkSuccessor(h);
+return true;
+```
+- `head!=null`,因为head节点是，后续线程获取锁失败后，加入队列时创建的，所以`head!=null`就表示有后续节点。
+- `h.waitStatus != 0`一个节点的初始状态是0，在后置节点第一次判断是否应该挂起的时候，会把他的前置节点状态修改为`SIGNAL`也就是1。所以`h.waitStatus=0`就可以理解为
+  - 后置节点正在执行中，还没有挂起，所以不需要唤醒
+  - 后置节点调用的是带有超时的`acquire()`方法，已经等待所超时了
+  - 这几种情况都不需要唤醒。
+
+### unparkSuccessor唤醒后置节点
+当一个线程释放了锁，并且确定有线程需要唤醒的时候，会调用`unparkSuccessor()`唤醒后面的节点。
+
+```java
+
+/**
+ * Wakes up node's successor, if one exists.
+ *
+ * @param node the node
+ */
+private void unparkSuccessor(Node node) {
+    /*
+     * If status is negative (i.e., possibly needing signal) try
+     * to clear in anticipation of signalling.  It is OK if this
+     * fails or if status is changed by waiting thread.
+     */
+     // 这里传入的是头结点，头结点已经完成了唤醒后面节点的操作，那么则可以把这个状态改回默认值了
+    int ws = node.waitStatus;
+    if (ws < 0)
+        compareAndSetWaitStatus(node, ws, 0);
+
+    /*
+     * Thread to unpark is held in successor, which is normally
+     * just the next node.  But if cancelled or apparently null,
+     * traverse backwards from tail to find the actual
+     * non-cancelled successor.
+     */
+    /**
+     这里从后向前遍历的原因是，在新节点node入队的时候，都是先设置
+     node.prev = p（之前的tail节点）(也就是说从后向前可以遍历整个队里了)
+     然后通过cas，把node节点设置为tail
+     如果cas成功，才设置 p.next = node (这时候从head节点向后才能遍历整个队列)
+
+     以为cas成功，和 设置 p.next = node 这两个步骤并不是原子的
+     所以如果cas成功之后，在执行 p.next = node之前，unparkSuccessor()被调用。
+     线程开始从前往后遍历，这时候 p.next 还是为null的，所以就不能遍历队列所有的节点了。
+     **/
+
+    /**
+     * 因为Node是一个双向队列
+     * 在插入新节点的时候，总是会先把新节点和前面的节点(也就是之前的尾结点)建立联系。node.prev = p;
+     * 然后当新节点成功的成为尾结点之后，才会把 前面的节点和新节点建立联系 p.next = node;
+     *
+     * 这是可以理解，也是必须的。
+     * 因为 p(之前的尾结点)，已经是队列中确定的一个节点，如果在node节点确定加入队列之前就修改了p节点的next属性，如果node能在紧接着的
+     * cas操作成功还好，如果cas失败，那就是让p.next指向了一个队列外的节点。这肯定是不行的。
+     *
+     * 所以说要么把入队和与p.next = node 这两个操作搞成一个原子操作(但是这样肯定会影响性能)，要么想出一个方案，在节点已经入队(已经成为了尾结点)，但是前面节点p还没和node节点建立联系的情况下，也能顺利的遍历所有的节点。
+     *
+     * 先执行node.prev = p，就是解决这个问题的办法。
+     *
+     * 所以导致了这里必须采用从队尾开始遍历的方案
+     *
+     */
+
+    //拿到头结点的下一个节点
+    Node s = node.next;
+    //如果为空，或者状态是已取消，则从尾结点开始找到一个非canceled状态的节点，然后唤醒它
+    if (s == null || s.waitStatus > 0) {
+        s = null;
+        for (Node t = tail; t != null && t != node; t = t.prev)
+            if (t.waitStatus <= 0)
+                s = t;
+    }
+    //如果找到了合适的节点，则使用unpark()方法唤醒
+    if (s != null)
+        LockSupport.unpark(s.thread);
+}
+
+```
+- 首先拿到头结点的后置节点，如果为空或者状态是`CANCELLED`则从队列中寻找一个可用的节点
+- <span style="color:red"> 这里有一个关键就是从队尾开始寻找 </span>
+- 如果找到了，则使用`LockSupport.unpark(s.thread)`唤醒指定的线程。
+- 我们上面说过了，线程挂起之后就会停在 `parkAndCheckInterrupt()`方法的`LockSupport.park()`这里，被唤醒后会继续向下执行，就会继续在`acquireQueued()`方法中尝试获取锁
+- 不断的循环`尝试获取->失败->挂起->唤醒->尝试获取`这个过程，直到成功获取。
+
+
+
+## 重点问题总结
+下面的一些重点问题，其实在上面方法的部分中已经提到了，这里专门整理出来，也是为了更方便的查看，AQS中的细节很多，如果全部都去了解需要耗费太多的精力。
+
+### 为什么线程被唤醒之后要调用Thread.interrupted()清除中断状态
+[parkAndCheckInterrupt挂起并检查中断状态](/blog/aqs/#parkandcheckinterrupt%e6%8c%82%e8%b5%b7%e5%b9%b6%e6%a3%80%e6%9f%a5%e4%b8%ad%e6%96%ad%e7%8a%b6%e6%80%81)
+我们在上面的这个标题中个，讨论了这个问题。
+主要原因就是线程在被中断唤醒之后，去获取锁不一定会成功，如果失败了，还需要继续挂起，如果不清除中断状态，就会无法挂起了，所以这里必须要清除
+
+
+### 为什么需要调用selfInterrupt进行自我中断
+上面我们说到，线程在等待锁的状态下，被调用了中断。
+- 在执行parkAndCheckInterrupt()方法后，会被清除掉线程的中断状态。
+- 但是会在`acquireQueued`方法中记录下来被调用了中断的这个事情`interrupted = true;`
+- 线程在获取到锁之后，会返回中断状态
+- 如果这时候返回的是true，表示线程在这段时间内被中断过，但是线程的中断状态已经被清除了
+- 所以需要调用`selfInterrupt`自我中断一下，设置中断状态，一遍后面的代码可能会有用到中断状态的地方。
+- <span style="color:red"> AQS在这里秉持的一个原则就是，我可以不响应中断，但是我不能报中断状态吞掉</span>
+
+
+### 唤醒后置节点的时候为什么从Tail开始遍历
+
+这个问题我们在[unparksuccessor](/blog/aqs/#unparksuccessor%e5%94%a4%e9%86%92%e5%90%8e%e7%bd%ae%e8%8a%82%e7%82%b9)的代码注释中有详细的说明。
 
 ### fast path和slow path
 在查看`synchronized`原码的时候就很多次看到`fast path`和`slow path`这两个词。这次又在AQS的代码中看到相关的概念，稍微有一点想法，尝试着解释一下。
@@ -783,26 +999,11 @@ SIGNAL:   The successor of this node is (or will soon be)
 
 `slow path`
 
--相对的slow path，就是指的一种重量级的方式，可以确保一定会成功。在AQS中，`slow path`指的就是循环调用CAS操作。
+-相对的slow path，就是指的一种重量级的方式，可以确保一定会成功。在AQS中，`slow path`指的就是循环调用CAS操作。操作系统在执行循环操作的时候，会需要一些额外的资源。
 
 一般在编写过程中，可以先尝试使用一次`fast path`
 - 如果成功了则节省了很多资源
 - 如果失败了那么在调用`slow path`，比直接调用`slow path`只多出了一次`fast path`操作，消耗也可以接受。
-
-### 为什么需要调用selfInterrupt进行自我中断
-
-
-### 唤醒的时候为什么从后面开始遍历
-
-
-
-
-
-
-
-
-
-
 
 
 
