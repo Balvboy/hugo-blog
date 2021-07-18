@@ -5,12 +5,12 @@ description: "volatile"
 showonlyimage: false
 author:     "zhouyang"
 date:     2021-05-21
-published: true 
+published: true
 tags:
     - volatile
     - 内存屏障
     - Lock指令
-categories: [ tech ]  
+categories: [Java同步机制]
 mermaid: true
 
 ---
@@ -60,7 +60,7 @@ CASE(_putstatic):
   if (cache->is_volatile()) {
     ...
     OrderAccess::storeload();
-  } 
+  }
   ...
 }
 
@@ -196,7 +196,7 @@ inline void OrderAccess::fence() {
 
 ### 内嵌汇编指令
 
-内嵌汇编指令的格式是 
+内嵌汇编指令的格式是
 
 `__asm__　__volatile__("Instruction List" : Output : Input : Clobber/Modify);`
 
@@ -217,7 +217,7 @@ inline void OrderAccess::fence() {
 
 了解了内嵌汇编代码的格式，我们再来看上面的两个方法。
 
-`compiler_barrier()`：` __asm__ volatile ("" : : : "memory");` 
+`compiler_barrier()`：` __asm__ volatile ("" : : : "memory");`
 
 禁止编译器对汇编代码前后的代码块，进行重排序等优化，并且告诉编译器我修改了memory中的内容
 
@@ -239,11 +239,11 @@ inline void OrderAccess::fence() {
 [Intel开发手册下载地址](https://www.intel.cn/content/dam/www/public/us/en/documents/manuals/64-ia-32-architectures-software-developer-system-programming-manual-325384.pdf)
 
 
-`8.1- LOCKED ATOMIC OPERATIONS` 
+`8.1- LOCKED ATOMIC OPERATIONS`
 
 > The processor uses three interdependent mechanisms for carrying out locked atomic operations:
 
->• Guaranteed atomic operations 
+>• Guaranteed atomic operations
 >
 >• Bus locking, using the LOCK# signal and the LOCK instruction prefix
 >
@@ -262,18 +262,18 @@ inline void OrderAccess::fence() {
 
 `lock前缀`指令的实现方法，在早期CPU和现代CPU中有很大不同,我们还是引用开发手册中的描述
 
-`8.1.2-Bus Locking` 
+`8.1.2-Bus Locking`
 
->In the case of the Intel386, Intel486, and Pentium processors, explicitly locked instructions will result in the asser- tion of the LOCK# signal. It is the responsibility 
+>In the case of the Intel386, Intel486, and Pentium processors, explicitly locked instructions will result in the asser- tion of the LOCK# signal. It is the responsibility
 >of the hardware designer to make the LOCK# signal available in system hardware to control memory accesses among processors.
 >
->For the P6 and more recent processor families, if the memory area being accessed is cached internally in the processor, the LOCK# signal is generally not asserted; 
+>For the P6 and more recent processor families, if the memory area being accessed is cached internally in the processor, the LOCK# signal is generally not asserted;
 >instead, locking is only applied to the processor’s caches
 
 意思是，在早期的CPU中，当使用`lock前缀`指令时候，会导致产生一个`LOCK#`信号，通过总线锁定对应的内存，其它 CPU 对内存的读写请求都会被阻塞，直到锁释放。
 在后来的处理器的处理逻辑中，如果要操作的内存，已经cache到了处理器的缓存中，那么将不会产生`LOCK#`信号，则通过缓存一致性协议来完成原子性的保证。
 
-`8.1.4-Effects of a LOCK Operation on Internal Processor Caches` 
+`8.1.4-Effects of a LOCK Operation on Internal Processor Caches`
 
 >For the P6 and more recent processor families, if the area of memory being locked during a LOCK operation is
 cached in the processor that is performing the LOCK operation as write-back memory and is completely contained
@@ -304,19 +304,19 @@ operation is called “cache locking.” The cache coherency mechanism automatic
 > The Intel 64 and IA-32 architectures provide several mechanisms for strengthening or weakening the memory-
 > ordering model to handle special programming situations. These mechanisms include:
 
->• The I/O instructions, locking instructions, the LOCK prefix, and serializing instructions force stronger 
->ordering on the processor. 
+>• The I/O instructions, locking instructions, the LOCK prefix, and serializing instructions force stronger
+>ordering on the processor.
 >
->• The SFENCE instruction (introduced to the IA-32 architecture in the Pentium III processor) and the LFENCE 
->and MFENCE instructions (introduced in the Pentium 4 processor) provide memory-ordering and serialization 
+>• The SFENCE instruction (introduced to the IA-32 architecture in the Pentium III processor) and the LFENCE
+>and MFENCE instructions (introduced in the Pentium 4 processor) provide memory-ordering and serialization
 >capabilities for specific types of memory operations.
 >
 > ... 省略部分
-> 
->Synchronization mechanisms in multiple-processor systems may depend upon a strong memory-ordering model. 
+>
+>Synchronization mechanisms in multiple-processor systems may depend upon a strong memory-ordering model.
 >Here, a program can use a locking instruction such as the XCHG instruction or the LOCK prefix to ensure that
 >a read-modify-write operation on memory is carried out atomically. Locking operations typically operate like
-> I/O operations in that they wait for all previous instructions to complete and for all buffered writes to 
+> I/O operations in that they wait for all previous instructions to complete and for all buffered writes to
 >drain to memory
 
 意思是，Intel处理器提供了几种机制用来加强或者削弱内存排序。其中使用IO相关指令、锁定指令、LOCK前缀指令、序列化相关指令都能够强化
@@ -412,7 +412,7 @@ operation is called “cache locking.” The cache coherency mechanism automatic
 // always use locked addl since mfence is sometimes expensive
 ```
 
-大概意思就是说，`mfence`目前有几个缺点 
+大概意思就是说，`mfence`目前有几个缺点
 
 1.并不是所有cpu都支持这个指令。
 2. 在最早前的CPU中性能比`lock前缀`差一些。
@@ -442,7 +442,7 @@ operation is called “cache locking.” The cache coherency mechanism automatic
 
 ### MESI协议
 `MESI`是众多缓存一致性协议中的一种，也在Intel系列中广泛使用的缓存一致性协议
-缓存行（Cache line）的状态有`Modified`、`Exclusive`、 `Share` 、`Invalid`，而MESI 
+缓存行（Cache line）的状态有`Modified`、`Exclusive`、 `Share` 、`Invalid`，而MESI
 命名正是以这4中状态的首字母来命名的。该协议要求在每个缓存行上维护两个状态位，使得每个数据单位可能处于M、E、S和I这四种状态之一。
 
 | 状态      | 描述    |  监听任务  |

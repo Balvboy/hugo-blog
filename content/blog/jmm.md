@@ -5,10 +5,12 @@ description: "Java Memory Model"
 showonlyimage: false
 author:     "zhouyang"
 date:     2021-06-06
-published: true 
+published: true
 tags:
     - volatile
-categories: [ tech ]  
+    - JMM
+    - Java内存模型
+categories: [Java同步机制]
 mermaid: true
 
 ---
@@ -48,10 +50,10 @@ mermaid: true
 
 ## 处理器内存模型
 
-根据对不同类型读 / 写操作组合的执行顺序的放松，可以把常见处理器的内存模型划分为下面几种类型： 
+根据对不同类型读 / 写操作组合的执行顺序的放松，可以把常见处理器的内存模型划分为下面几种类型：
 
 - 放松程序中写 - 读操作的顺序，由此产生了 total store ordering 内存模型（简称为 TSO）。
-- 在前面 1 的基础上，继续放松程序中写 - 写操作的顺序，由此产生了 partial store order 内存模型（简称为 PSO）。 
+- 在前面 1 的基础上，继续放松程序中写 - 写操作的顺序，由此产生了 partial store order 内存模型（简称为 PSO）。
 - 在前面 1 和 2 的基础上，继续放松程序中读 - 写和读 - 读操作的顺序，由此产生了 relaxed memory order 内存模型（简称为 RMO）和 PowerPC 内存模型。
 
 注意，这里处理器对读 / 写操作的放松(重排序)，是以两个操作之间不存在数据依赖性为前提的（因为处理器要遵守 as-if-serial 语义，处理器不会对存在数据依赖性的两个内存操作做重排序）
@@ -61,9 +63,9 @@ mermaid: true
 ![](/img/cpumm1.png)
 
 
-- 在这个表格中，我们可以看到所有处理器内存模型都允许写 - 读重排序，原因在第一章以说明过：它们都使用了写缓存区，写缓存区可能导致写 - 
+- 在这个表格中，我们可以看到所有处理器内存模型都允许写 - 读重排序，原因在第一章以说明过：它们都使用了写缓存区，写缓存区可能导致写 -
  读操作重排序。同时，我们可以看到这些处理器内存模型都允许更早读到当前处理
-器的写，原因同样是因为写缓存区：由于写缓存区仅对当前处理器可见，这个特性导致当前处理器可以比其他处理器先看到临时保存在自己的写缓存区中的写。 
+器的写，原因同样是因为写缓存区：由于写缓存区仅对当前处理器可见，这个特性导致当前处理器可以比其他处理器先看到临时保存在自己的写缓存区中的写。
 - 上面表格中的各种处理器内存模型，从上到下，模型由强变弱。越是追求性能的处理器，内存模型设计的会越弱。因为这些处理器希望内存模型对它们的束缚越少越好，这样它们就可以做尽可能多的优化来提高性能。
 
 
@@ -152,4 +154,3 @@ JVM规定
 [JVM 基础 - Java 内存模型详解](https://www.pdai.tech/md/java/jvm/java-jvm-jmm.html#happens-before)
 [Java 内存模型（Java Memory Model）](https://note.youdao.com/ynoteshare1/index.html?id=6ac7397bf1fd90982b89f5510e80be79&type=note)
 [全面理解Java内存模型(JMM)及volatile关键字](https://blog.csdn.net/javazejian/article/details/72772461)
-

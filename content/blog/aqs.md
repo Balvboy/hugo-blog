@@ -9,7 +9,7 @@ published: true
 tags:
     - AQS
     - ReentranLock
-categories: [ Tech , AQS]
+categories: [Java同步机制]
 mermaid: true
 ---
 
@@ -966,6 +966,243 @@ private void unparkSuccessor(Node node) {
 - 不断的循环`尝试获取->失败->挂起->唤醒->尝试获取`这个过程，直到成功获取。
 
 
+## Condition
+在详细分析`Condition`代码之前，先说一下我对`Condition`的理解
+
+<span style="color:red">如果说`Lock`和`synchronized`相对应，那么`Conditon`就是和`wait()`,`notify`相对应</span>
+
+Condition为Lock提供了条件等待的功能，即`一个线程达到某个条件时暂停执行，直到另一个线程通知它再次执行`。因为这个条件需要在不同的线程中被访问，所以对Conditon对象的操作必须受到`Lock`的保护，也就是必要获得`Lock`，才能执行。
+
+### Condition原理
+- 当一个线程A获取了lock锁，调用了`condition.await()`,会释放锁，并构建一个Node对象(和AQS中的一样)节点状态为`CONDITION,-2`，加入到Condition的条件队列中。
+- 然后让当前线程挂起，等待唤醒，或者挂起一段时间自己唤醒
+- 当另一个线程B获取了lock锁，调用了`condition.signal()`,会找到`condition`条件队列中的第一个节点，把它加入到AQS的同步队列中，然后唤醒Node中的线程。
+- 线程A被唤醒后，会调用`acquireQueued`再次尝试获取锁
+
+
+`Condition`的原理其实和JVM对于`wait`和`notify`的实现很类似。我们对比着来说明一下。
+
+`wait`和`notify`执行大致流程
+
+- 线程A在同步代码块中，调用`wait()`方法，释放锁，并把A线程加入到`waitSet`中
+- 线程挂起，等待唤醒，或者挂起一段时间自己唤醒
+- 线程B，在同步代码块中，调用`notify`方法，会唤醒`waitSet`队列中的第一个节点，然后把这个节点加入到`cxq`队列中
+- 线程A就在cxq队列中等待再次获取锁。
+
+我们看到Condition和`wait`于`notify`的流程基本完全相同
+
+- `Condition队列`对应着`waitSet`
+- `同步队列`对应着`cxq`
+- 另外他们对于中断的处理也是很相似的。因为线程的挂起可以被中断方法唤醒，所以他们在被唤醒之后，都需要检查自己是不是被中断唤醒的
+- 如果是被中断唤醒，需要有对应的处理，
+  - `wait`是直接抛出`中断异常`
+  - condition可以根据一定的策略，可以选择`抛出中断异常`和`自我中断`
+
+有了这些概念，下面我们来进入代码分析
+
+### 代码分析
+
+#### await()
+
+```Java
+// Condition中的操作实际上是，先把自己加入到一个 Condition队列中。
+// 然后释放掉获取的AQS锁，然后通过LockSupport挂起，等待其他线程唤醒，唤醒后在继续获取锁
+public final void await() throws InterruptedException {
+    if (Thread.interrupted())
+        throw new InterruptedException();
+    //加入一个新节点到，condition队列中
+    Node node = addConditionWaiter();
+    //释放锁，想一下wait和notify，别人在唤醒你的时候，也需要获得锁，如果你不释放别人怎么唤醒你呢，所以这里要释放锁
+    int savedState = fullyRelease(node);
+    int interruptMode = 0;
+    //在调用signal的时候会把节点加入到同步队列中，
+    //如果已经在队列中了，那说明已经有人唤醒了它，把它加入到了队列中，那么直接获取锁就可以了。
+    //如果还没有加入队列，则需要挂起，等待唤醒的时候被加入到队列中。
+    while (!isOnSyncQueue(node)) {
+        LockSupport.park(this);
+        if ((interruptMode = checkInterruptWhileWaiting(node)) != 0)
+            break;
+    }
+    //然后在进入等待队列中获取锁
+    if (acquireQueued(node, savedState) && interruptMode != THROW_IE)
+        interruptMode = REINTERRUPT;
+    if (node.nextWaiter != null) // clean up if cancelled
+        unlinkCancelledWaiters();
+    if (interruptMode != 0)
+        //根据interruptMode执行抛出异常或者自我中断
+        reportInterruptAfterWait(interruptMode);
+}
+
+
+```
+#### addConditionWaiter
+```Java
+/**
+ * Adds a new waiter to wait queue.
+ * @return its new wait node
+ */
+//这里之所以在向队列中添加节点的时候，没有采用AQS中的那种 形式
+//是因为在调用 condition.await()的时候，需要先通过 lock.lock()获取到锁，所以在这一步不会存在竞争
+//Condition队列是一个全新的队列
+//这里因为没有并发问题，所以写起来就明朗多了，不用各种的CAS操作来保证并发安全了
+private Node addConditionWaiter() {
+    Node t = lastWaiter;
+    // If lastWaiter is cancelled, clean out.
+    if (t != null && t.waitStatus != Node.CONDITION) {
+        //删除所有cancelled状态的节点
+        unlinkCancelledWaiters();
+        t = lastWaiter;
+    }
+    //构建节点，初始即为Condition状态。
+    //如果当前队列为空，就设置为头结点
+    //如果不为空，就设置为当前tail的next
+    //最后设置当前节点为尾节点
+    Node node = new Node(Thread.currentThread(), Node.CONDITION);
+    if (t == null)
+        firstWaiter = node;
+    else
+        t.nextWaiter = node;
+    lastWaiter = node;
+    return node;
+}
+
+```
+
+#### fullyRelease
+
+```Java
+//这里的fully的意思是，不管发生了几次重入，全部一次性释放
+//所以这里是直接拿到当前的state，然后一次性release
+//并唤醒同步队列中的一个节点
+final int fullyRelease(Node node) {
+    boolean failed = true;
+    try {
+        int savedState = getState();
+        if (release(savedState)) {
+            failed = false;
+            return savedState;
+        } else {
+            throw new IllegalMonitorStateException();
+        }
+    } finally {
+        if (failed)
+            node.waitStatus = Node.CANCELLED;
+    }
+}
+
+
+```
+
+#### checkInterruptWhileWaiting
+
+```Java
+/**
+ * Checks for interrupt, returning THROW_IE if interrupted
+ * before signalled, REINTERRUPT if after signalled, or
+ * 0 if not interrupted.
+ */
+/**
+ * 在唤醒钱被中断，则返回 throw_ie,唤醒后中断则返回 REINTERRUPT
+ * 没有中断，返回0
+ */
+private int checkInterruptWhileWaiting(Node node) {
+    return Thread.interrupted() ?
+        (transferAfterCancelledWait(node) ? THROW_IE : REINTERRUPT) :
+        0;
+}
+
+```
+
+#### signal
+
+```Java
+public final void signal() {
+    //首先判断是不是持有锁，如果没有持有锁，则抛出监视器状态异常
+    if (!isHeldExclusively())
+        throw new IllegalMonitorStateException();
+    //唤醒Condition队列的第一个节点
+    Node first = firstWaiter;
+    if (first != null)
+        doSignal(first);
+}
+
+```
+
+```Java
+//唤醒wait队列上的第一个节点
+private void doSignal(Node first) {
+    do {
+        //判断是否队列上只有一个节点，如果是，就将lastWaiter 设置为null
+        if ( (firstWaiter = first.nextWaiter) == null)
+            lastWaiter = null;
+        //既然要唤醒第一个节点，唤醒后，直接将第一个节点从队列上移除。
+        first.nextWaiter = null;
+        //通过transferForSignal将节点加入到同步队列中。如果加入失败了，则重新取出wait队列的第一个节点并唤醒。
+    } while (!transferForSignal(first) &&
+            (first = firstWaiter) != null);
+}
+
+```
+
+
+```java
+
+//将wait节点放入到同步队列中
+final boolean transferForSignal(Node node) {
+    /*
+     * If cannot change waitStatus, the node has been cancelled.
+     */
+     //这里如果CAS失败，说明当前节点的状态已经不是CONDITION，说明已经被其他线程唤醒了。
+     //返回false之后，外层是一个循环，会继续取出wait队列的第一个节点，继续执行唤醒操作
+    if (!compareAndSetWaitStatus(node, Node.CONDITION, 0))
+        return false;
+    /*
+     * Splice onto queue and try to set waitStatus of predecessor to
+     * indicate that thread is (probably) waiting. If cancelled or
+     * attempt to set waitStatus fails, wake up to resync (in which
+     * case the waitStatus can be transiently and harmlessly wrong).
+     */
+     //将当前节点加入到同步队列，注意，这里enq返回值返回的是假如队列节点的前一个节点，也就是原队尾节点。
+    Node p = enq(node);
+    int ws = p.waitStatus;
+    //这里的判断非常巧妙，我们知道，我们把Node节点从wait移动到同步队列，如果我们把节点线程唤醒，是没有问题的。
+    //因为唤醒后执行到await中的acquireQueued的时候，会被重新挂起，但是这样比较耗费性能，是没有必要的。
+    //所以这里进行了判断，如果移入到同步队列后，发现原尾节点的状态大于0，或者将尾节点的状态改为SIGNAL的时候失败了，才会唤醒。并在acquireQueued中重新整理同步队列并重新挂起。
+    //这里不挂起是没有问题的，因为在acquireQueued挂起前判断，如果当前节点是第一个节点，会直接获取锁。如果中断唤醒了，或继续从await挂起的地方继续执行，会继续在acquireQueued的地方重新挂起。
+    if (ws > 0 || !compareAndSetWaitStatus(p, ws, Node.SIGNAL))
+        LockSupport.unpark(node.thread);
+    return true;
+}
+
+```
+
+#### signalAll
+
+```java
+public final void signalAll() {
+    if (!isHeldExclusively())
+        throw new IllegalMonitorStateException();
+    //拿到wait队列，执行doSignalAll
+    Node first = firstWaiter;
+    if (first != null)
+        doSignalAll(first);
+
+```
+
+```Java
+//理解了signal，理解这里的doSignalAll就很简单了。
+//就是遍历wait队列上的节点逐个顺序取出放入到同步队列中。
+private void doSignalAll(Node first) {
+    lastWaiter = firstWaiter = null;
+    do {
+        Node next = first.nextWaiter;
+        first.nextWaiter = null;
+        transferForSignal(first);
+        first = next;
+    } while (first != null);
+}
+```
+
 
 ## 重点问题总结
 下面的一些重点问题，其实在上面方法的部分中已经提到了，这里专门整理出来，也是为了更方便的查看，AQS中的细节很多，如果全部都去了解需要耗费太多的精力。
@@ -1005,6 +1242,149 @@ private void unparkSuccessor(Node node) {
 - 如果成功了则节省了很多资源
 - 如果失败了那么在调用`slow path`，比直接调用`slow path`只多出了一次`fast path`操作，消耗也可以接受。
 
+### CANCELED节点
+这里我们讨论一下CANCELED状态节点的问题。
+
+#### CANCELED节点何时产生
+在代码里我们看到`CANCELED`被直接用到的地方只有两处代码
+![](/img/canceled.png)
+第二处调用的方法`fullyRelease`是Condition相关的，我们先不看，主要看第一个方法`cancelAcquire`。
+
+我们看这个方法的名字就很清晰，表示取消获取锁，它在什么时候被调用呢?
+
+![](/img/cancelacquire.png)
+我们看到它被调用的地方都很统一，就是在各种各样的获取锁方法中被调用。代码的逻辑也都很一致。
+- 在方法中定义一个局部变量 fail = true；
+- 在获取锁成功的时候设置 fail = false;
+- 在finally代码块中判断fail，如果为true，则执行`cancelAcquire`方法。
+这就表示，在获取锁的过程中，只要发生了任何意外情况导致获取锁失败了，像执行出现异常、获取锁超时、获取锁被中断(不响应中断的获取锁除外)都会执行到这个方法。
+
+下面就来看一下这个方法
+```Java
+private void cancelAcquire(Node node) {
+    // Ignore if node doesn't exist
+    if (node == null)
+        return;
+    //将节点中的线程设置为null
+    //设置该节点不关联任何线程，也就是虚节点
+    node.thread = null;
+
+    // Skip cancelled predecessors
+    //跳过前面节点中状态为cancel的节点，把这个节点的前置节点引用指向一个不是cancel状态的节点(0,或者SIGNAL)
+    Node pred = node.prev;
+    while (pred.waitStatus > 0)
+        node.prev = pred = pred.prev;
+
+    // predNext is the apparent node to unsplice. CASes below will
+    // fail if not, in which case, we lost race vs another cancel
+    // or signal, so no further action is necessary.
+    Node predNext = pred.next;
+
+    // Can use unconditional write instead of CAS here.
+    // After this atomic step, other Nodes can skip past us.
+    // Before, we are free of interference from other threads.
+    //把当前节点的状态设置为取消
+    node.waitStatus = Node.CANCELLED;
+
+    // If we are the tail, remove ourselves.
+    // 如果当前节点是尾结点，则修改当前节点的前置节点为新的尾结点
+    if (node == tail && compareAndSetTail(node, pred)) {
+        //如果修改成功，然后把前置节点的next 设置为null,这时候前置节点已经是尾结点了，所以它没有next节点了
+        //这一步成功失败，并不重要，如果失败，表示节点已经为null了，或者有新的节点加入，成为了它的next
+        compareAndSetNext(pred, predNext, null);
+    } else {
+        // If successor needs signal, try to set pred's next-link
+        // so it will get one. Otherwise wake it up to propagate.
+        //如果走到这里，说明要么当前节点不是tail节点
+        //或者，在cas的时候node不是尾结点了，有新的线程加入成为了新的尾结点。
+        int ws;
+        //首先判断node节点的前置节点是不是head,如果是则直接走else逻辑
+        if (pred != head &&
+            //如果node的前置节点不是head
+            //则判断waitStatus是不是signal
+                //如果不是signal，则判断是不是非cancelled状态，如果是则cas把状态设置为signal
+            //判断pred的线程不能为null
+            ((ws = pred.waitStatus) == Node.SIGNAL || (ws <= 0 && compareAndSetWaitStatus(pred, ws, Node.SIGNAL)))
+                && pred.thread != null) {
+            //接下来的操作，我理解就是把node的前置节点和node的next节点，连接起来
+            Node next = node.next;
+            if (next != null && next.waitStatus <= 0)
+                compareAndSetNext(pred, predNext, next);
+        } else {
+            //如果是head的话那么现在队列的情况是   head -> node -> node1 -> tail
+            //这时候 node节点是cancel状态，那么就需要唤醒 node1节点
+            //唤醒node1 需要传入的是node1的前置节点也就是node，所以 unparkSuccessor(node);
+            unparkSuccessor(node);
+        }
+
+        //为什么不是=null呢？
+        node.next = node; // help GC
+    }
+}
+
+```
+
+- 设置Node的thread为null
+- 把当前节点的挂到一个非`CANCELLED`状态的节点上，并没有清除,因为这这里并没有设置`pred.next = node`
+- 设置当前Node状态为`CANCELLED`
+- 拿到前置节点的后置节点，一般来说正常情况下，就是Node节点
+- 判断当前节点是不是尾节点
+- 如果是尾节点，就把当前节点的前置节点设为尾节点
+  - 如果设置成功，把前置节点(也就是当前的尾节点)的next设置为null(这一步失败了也没有关系)
+- 如果不是尾节点，或者设置尾节点失败(表示有新节点加入成为了新的尾节点)。执行else逻辑
+
+else中的逻辑判断比较复杂，我们单独来看一下
+
+- 首先如果Node节点的前置节点是Head节点,也就是下面这种情况，其中Node表示当前节点，Node节点为`CANCELLED`状态。本来正常情况下Node节点是下次被唤醒的节点，但是它取消了，那么就应该唤醒它的后置节点node1了。
+唤醒它的后置节点后，后置节点会尝试获取锁，这时候如果之前持有锁的线程还没有释放，他会获取失败，然后在`shouldParkAfterFailedAcquire`方法中，把处于`CANCELLED`状态的节点移除队列
+如果获取成功了，那么前面的节点肯定也会被排除队列了
+```
+Head -> cancelledNode -> node1
+```
+
+- 如果前置节点不是头结点，并且前置节点的状态不是`CANCELLED`,后面这些判断条件看看前置节点是不是`SIGNAL`状态，或者能不能设置为`SIGNAL`状态
+- 如果可以，就把`CANCELLED`状态节点的后置节点和他的前置节点连接上。相当于把自己踢出队列
+
+```
+Head -> node1-> cancelledNode -> node2
+
+Head -> node1-> node2
+
+```
+
+#### CANCELLED节点何时被踢出
+
+大部分的踢出`CANCELLED`节点的操作都在`shouldParkAfterFailedAcquire`方法中完成。也就是这部分代码
+```Java
+if (ws > 0) {
+    /*
+     * Predecessor was cancelled. Skip over predecessors and
+     * indicate retry.
+     */
+    do {
+        node.prev = pred = pred.prev;
+    } while (pred.waitStatus > 0);
+    pred.next = node;
+}
+
+```
+在JDK原码中有很多这种写法，看的有点蒙蒙的，我们把它拆解一下
+```
+pred = pred.prev;
+node.prev = pred;
+
+```
+就是pred，往前挪一个节点，然后node.prev指向新的pred节点。
+下面用图来表示一下，tail表示 node节点
+
+
+![](/img/kickcancel.png)
+
+- 初始状态，pred指向node3，node.prev指向node3，
+- 因为node3状态为 `cancelled`,所以pred向前挪一个,指向node2，同时node.prev指向node2
+- 因为node2状态为 `cancelled`,所以pred向前挪一个,指向node1，同时node.prev指向node1
+- node1状态为`SIGNAL`,跳出循环，设置node1.next = node,把node2和node3排除队列
+
 
 
 
@@ -1015,3 +1395,5 @@ private void unparkSuccessor(Node node) {
 [从ReentrantLock的实现看AQS的原理及应用](https://tech.meituan.com/2019/12/05/aqs-theory-and-apply.html)
 
 [公平锁与非公平锁的对比](https://juejin.cn/post/6844903985745231886)
+
+[ReentrantLock Condition源码分析](https://blog.csdn.net/b_x_p/article/details/105168224)

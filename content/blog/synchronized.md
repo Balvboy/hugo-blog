@@ -4,11 +4,10 @@ title:      "Java同步机制(一)-Synchronized"
 description: "Java同步机制(一)-Synchronized"
 author:     "zhouyang"
 date:     2021-03-19
-published: true 
+published: true
 tags:
-    - 同步机制
     - synchronized
-categories: [ tech ]    
+categories: [Java同步机制]  
 ---
 
 
@@ -265,7 +264,7 @@ CASE(_monitorenter): {
         4. 如果都不满足上面的情况，那就是标明，当前锁对象头处于匿名偏向状态，或者偏向了其他线程，那构建一个偏向当前线程的对象头，和匿名偏向的对象头，然后CAS替换到锁对象头中，这里只有锁是匿名偏向状态的时候才会替换成功
             1. 如果设置成功，则设置success= true，表示获取偏向锁成功。`（对象头状态: 匿名偏向->偏向当前线程）`
             2. 如果设置失败，说明锁已经偏向了其他线程，则直接调用`monitorenter`锁升级。
-        
+
 
 ![](/img/16209834037391.jpg)
 
@@ -288,7 +287,7 @@ CASE(_monitorenter): {
 
 ### fast_enter
 
-```c++ 
+```c++
 //obj 是锁对象
 //lock 是线程栈中的 lock record，存储了displaced header
 //attempt_rebias 是是否允许重偏向，我们这里是true
@@ -478,7 +477,7 @@ BiasedLocking::Condition BiasedLocking::revoke_and_rebias(Handle obj, bool attem
             - 如果是则直接由当前线程调用`revoke_bias`完成撤销，因为自己发起的，不会导致持有锁线程的异常。
             - 如果不是，则需要交给JVM线程，在安全点调用`revoke_bias`完成撤销。
     - 如果返回的`HR_BULK_REVOKE`和`HR_BULK_REBIAS`，则由JVM线程，在安全点完成批量撤销和批量重偏向。
-  
+
 ### update_heuristics
 
 JVM通过这个方法来进行偏向撤销的决策。
@@ -501,7 +500,7 @@ static HeuristicsResult update_heuristics(oop o, bool allow_rebias) {
   if (!mark->has_bias_pattern()) {
     return HR_NOT_BIASED;
   }
- 
+
   // 锁对象的类
   Klass* k = o->klass();
   // 当前时间
@@ -593,7 +592,7 @@ static BiasedLocking::Condition revoke_bias(oop obj, bool allow_rebias, bool is_
 
   // code 1：判断偏向线程是否还存活
   bool thread_is_alive = false;
-  // 如果当前线程就是偏向线程 
+  // 如果当前线程就是偏向线程
   if (requesting_thread == biased_thread) {
     thread_is_alive = true;
   } else {
@@ -766,7 +765,7 @@ static BiasedLocking::Condition bulk_revoke_or_rebias_at_safepoint(oop o,
   }
 
   ...
-  
+
   BiasedLocking::Condition status_code = BiasedLocking::BIAS_REVOKED;
 
   //在执行完批量操作后，如果允许重偏向，并且锁对象和类都处于偏向模式
@@ -1063,7 +1062,7 @@ CASE(_monitorenter): {
             entry->lock()->set_displaced_header(displaced);
             bool call_vm = UseHeavyMonitors;
             //将对象头中的地址替换为指向Lock Record的指针，替换成功，则说明获取轻量级锁成功,则什么都不做。
-            
+
             //这里替换失败有两种情况
             // 1.发生了竞争
             // 2.是锁重入
@@ -1136,7 +1135,7 @@ CASE(_monitorexit): {
                 //将对象头中的markoop替换为Lock Record中的markoop
                 if (call_vm || Atomic::cmpxchg_ptr(header, lockee->mark_addr(), lock) != lock) {
                   // restore object for the slow case
-                  
+
                   //如果替换失败，则还原Lock Record，并且执行锁升级的monitorexit
                   //说明在持有轻量级锁期间，有另一个线程，尝试获取，导致锁已经升级到重量级了
                   most_recent->set_obj(lockee);
@@ -1505,7 +1504,7 @@ inflate方法的功能是返回一个可用ObjectMonitor对象，如果没有就
 
 ```c++
 void ATTR ObjectMonitor::enter(TRAPS) {
-   
+
   Thread * const Self = THREAD ;
   void * cur ;
   // owner为null代表无锁状态，如果能CAS设置成功，则当前线程直接获得锁
@@ -1544,7 +1543,7 @@ void ATTR ObjectMonitor::enter(TRAPS) {
 
   ...
 
-  { 
+  {
     ...
 
     for (;;) {
@@ -1554,7 +1553,7 @@ void ATTR ObjectMonitor::enter(TRAPS) {
       ...
     }
     Self->set_current_pending_monitor(NULL);
-    
+
   }
 
   ...
@@ -1948,7 +1947,7 @@ void ATTR ObjectMonitor::exit(bool not_suspended, TRAPS) {
       ObjectWaiter * w = NULL ;
       // code 4：根据QMode的不同会有不同的唤醒策略，默认为0
       int QMode = Knob_QMode ;
-   
+
       if (QMode == 2 && _cxq != NULL) {
           // QMode == 2 : cxq中的线程有更高优先级，直接唤醒cxq的队首线程
           w = _cxq ;
@@ -2169,8 +2168,8 @@ void ObjectMonitor::exit(bool not_suspended, TRAPS) {
         q = p;
       }
     }
-     
-     
+
+
      //唤醒entryList中的头部节点
      w = _EntryList;
      if (w != NULL) {
@@ -2182,7 +2181,7 @@ void ObjectMonitor::exit(bool not_suspended, TRAPS) {
 
 ```
 
-总结一下就是 
+总结一下就是
 
 - 在默认情况下,所有等待锁的线程，会先放到`_cxq`队列中，后来的会放到`_cxq`的头部。
 - 当之前持有锁的线程，执行完了同步代码，触发了锁退出逻辑。
@@ -2191,8 +2190,8 @@ void ObjectMonitor::exit(bool not_suspended, TRAPS) {
 - 然后唤醒EntryList的头部节点。
 
 根据这个逻辑，表现在Java程序中。有 `T1`,`T2`,`T3`,`T4` 四个线程按顺序去获得锁，那么最终获得锁的顺序是。
-1. T1 
-2. T4 
+1. T1
+2. T4
 3. T3
 4. T2
 
@@ -2225,7 +2224,7 @@ public class ThreadSyncOrder {
             });
             t5.start();
         });
-        
+
         Thread t2 = new Thread(() -> {
             System.out.println("Thread 2 start!!!!!!");
             synchronized (lock) {
@@ -2848,8 +2847,8 @@ enum Mode {
 ## JVM中使用的CAS方法
 在JVM代码中，实现CAS是借助于下面这个方法。
 ```
-cmpxchg_ptr(intptr_t exchange_value, 
-        volatile intptr_t* dest, 
+cmpxchg_ptr(intptr_t exchange_value,
+        volatile intptr_t* dest,
         intptr_t compare_value)
 
 ```
@@ -2883,4 +2882,3 @@ if (Atomic::cmpxchg_ptr((void*)new_header, lockee->mark_addr(), header) == heade
 [[从源码分析Synchronized实现原理]](https://blog.csdn.net/b_x_p/article/details/103376678)
 
 [[Wait与notify/notifyAll源码分析]](https://blog.csdn.net/b_x_p/article/details/103980515)
-

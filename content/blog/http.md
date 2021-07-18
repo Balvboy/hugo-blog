@@ -4,11 +4,10 @@ title:      "HTTPS详解 "
 description: "HTTPS详解"
 author:     "zhouyang"
 date:     2021-01-26
-published: true 
+published: true
 tags:
     - https
-    - 证书
-categories: [ tech ]    
+categories: [ 网络协议 ]    
 ---
 
 
@@ -21,12 +20,12 @@ HTTPS简单的说就是安全版的HTTP。
 HTTPS的安全性是建立在密码学的基础之上的，有很多算法起到了至关重要的作用。
 
 ## HTTPS的交互过程
-通过上面的描述，我们已经能大概知道HTTPS是使用加密算法在浏览器和服务器之前传递秘钥，然后再使用秘钥完成信息的加解密。所以这个秘钥是如何生成的，还有秘钥是如何在浏览器和服务器之间传递的就成了HTTPS的关键，下面我们来详细的了解一下这个过程。 
+通过上面的描述，我们已经能大概知道HTTPS是使用加密算法在浏览器和服务器之前传递秘钥，然后再使用秘钥完成信息的加解密。所以这个秘钥是如何生成的，还有秘钥是如何在浏览器和服务器之间传递的就成了HTTPS的关键，下面我们来详细的了解一下这个过程。
 
 ![客户端与服务端交互](/img/Ssl_handshake_with_two_way_authentication_with_certificates.png#center)
 
 
-### 1.交互流程 
+### 1.交互流程
 1. Client Hello 客户端（通常是浏览器）先向服务器发出加密通信的请求,请求大概中包括下面内容
     *  支持的协议版本，比如TLS 1.0版。
     *  一个客户端生成的随机数 Random Number-RNc，稍后用于生成"对话密钥"。
@@ -127,7 +126,7 @@ ssl_verify_client on;
 ![15898713164120.jpg](/img/15898713164120.jpg#center )
 
 
-参考: 
+参考:
 [密码学套件](https://zhuanlan.zhihu.com/p/37239435)
 [密码学套件表达式](https://www.openssl.org/docs/man1.0.2/man1/ciphers.html)
 ## HTTPS中的算法
@@ -143,7 +142,7 @@ HTTPS中算法，根据算法的用途可以分为几大类
 
 加密算法基本可以分为两种 对称加密和非对称加密
 
-#### 对称加密 
+#### 对称加密
 
 顾名思义就是加密和解密都是用一个同样的秘钥，它的优点就行加解密的速度很快，缺点就是尤其需要注意秘钥的传输，不能泄露。
 包含的算法有 AES DES RC4等，常用的是AES
@@ -279,14 +278,14 @@ MAC只是定义了一个概念---使用一个key，给一段消息生成一个�
 ```
 openssl req -new -nodes -sha256 -newkey rsa:2048 -keyout myprivate.key -out mydomain.csr
 -new 指定生成一个新的CSR，
-nodes指定私钥文件不被加密, 
+nodes指定私钥文件不被加密,
 sha256 指定摘要算法，
-keyout生成私钥, 
+keyout生成私钥,
 newkey rsa:2048 指定私钥类型和长度，
 最终生成CSR文件mydomain.csr。
 
 ```
-    
+
 - 通过线上网站生成，一般需要填写下面的内容。
 ![CSR文件内容](/img/2829175-31655affc6683c0e.png)
 
@@ -345,11 +344,11 @@ CA机构签名完，并发送给我们之后，我们就能够把证书部署在
 * 根证书(Root CA)
     * 中介(中间)证书(Intermediates)
         * 终端实体证书(End-user)
- 
+
  终端证书的签发者是中间证书。
  中间证书的签发者是上级中间或者根证书。
  根证书的签发者是他自己。
- 
+
  ![image.png](/img/15900283382545.jpg#center)
 
 HTTPS的证书链，是一个自顶向下的信任链，每一个证书都需要它的上级证书来验证有效。所以根证书的作用就尤为重要，如果系统根证书被篡改，系统的安全性就受到威胁。
@@ -360,7 +359,7 @@ HTTPS的证书链，是一个自顶向下的信任链，每一个证书都需要
 
 参考:
 [数字证书](https://blog.cnbluebox.com/blog/2014/03/24/shu-zi-zheng-shu/)
- 
+
 ### 验证证书
  我们以wiki百科的证书链来举例
 ![image.png](/img/15898763181650.jpg#center)

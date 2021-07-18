@@ -7,9 +7,9 @@ author:     "zhouyang"
 date:     2021-06-23
 published: true
 tags:
-    - Lock
+    - Lock接口
     - AQS
-categories: [ Tech , AQS]
+categories: [Java同步机制]
 mermaid: true
 ---
 

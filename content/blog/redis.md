@@ -4,10 +4,10 @@ title:      "Redis为何使用单线程 "
 description: "Redis为何使用单线程"
 author:     "zhouyang"
 date:     2021-03-19
-published: true 
+published: true
 tags:
     - redis
-categories: [ tech ]    
+categories: [ Redis ]    
 ---
 # Redis的线程
 从接触到Redis开始，就了解到Redis的一个重要特性就是单线程。
@@ -23,7 +23,7 @@ server.supervised = redisIsSupervised(server.supervised_mode);
 int background = server.daemonize && !server.supervised;
 //判断Redis的启动模式
 if (background) daemonize();
-  
+
 initServer(); //初始化server服务
 if (background || server.pidfile) createPidFile();
 redisSetProcTitle(argv[0]);
@@ -68,7 +68,7 @@ server.initial_memory_usage = zmalloc_used_memory();
       pthread_t thread;
       size_t stacksize;
       int j;
-  
+
       /* Initialization of state vars and objects */
       for (j = 0; j < BIO_NUM_OPS; j++) {
           pthread_mutex_init(&bio_mutex[j],NULL);
@@ -77,14 +77,14 @@ server.initial_memory_usage = zmalloc_used_memory();
           bio_jobs[j] = listCreate();
           bio_pending[j] = 0;
       }
-  
+
       /* Set the stack size as by default it may be small in some system */
       pthread_attr_init(&attr);
       pthread_attr_getstacksize(&attr,&stacksize);
       if (!stacksize) stacksize = 1; /* The world is full of Solaris Fixes */
       while (stacksize < REDIS_THREAD_STACK_SIZE) stacksize *= 2;
       pthread_attr_setstacksize(&attr, stacksize);
-  
+
       /* Ready to spawn our threads. We use the single argument the thread
        * function accepts in order to pass the job ID the thread is
        * responsible of. */
@@ -111,7 +111,7 @@ server.initial_memory_usage = zmalloc_used_memory();
 ```c
       while(1) {
           listNode *ln;
-  
+
           /* The loop always starts with the lock hold. */
           if (listLength(bio_jobs[type]) == 0) {
               pthread_cond_wait(&bio_newjob_cond[type],&bio_mutex[type]);
@@ -123,7 +123,7 @@ server.initial_memory_usage = zmalloc_used_memory();
           /* It is now possible to unlock the background system as we know have
            * a stand alone job structure to process.*/
           pthread_mutex_unlock(&bio_mutex[type]);
-  
+
           /* Process the job accordingly to its type. */
           if (type == BIO_CLOSE_FILE) { //文件关闭操作
               close((long)job->arg1);

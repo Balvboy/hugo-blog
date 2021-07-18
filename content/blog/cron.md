@@ -6,11 +6,11 @@ showonlyimage: false
 excerpt: "crontab命令常见于Unix和类Unix的操作系统之中，用于设置周期性被执行的指令。该命令从标准输入设备读取指令，并将其存放于“crontab”文件中，以供之后读取和执行。该词来源于希腊语chronos(χρόνος)，原意是时间。"
 author:     "zhouyang"
 date:     2021-01-04
-published: true 
+published: true
 tags:
     - cron
     - crontab
-categories: [ tech ]    
+categories: [ 杂七杂八 ]    
 ---
 
 
@@ -48,7 +48,7 @@ categories: [ tech ]
 | │ ┌─日 day of month(1-31)
 | | | ┌─月（1 - 12）
 | | | | ┌─星期 day of week(0-7，0和7都表示星期日)
-* * * * * 
+* * * * *
 ```
 [linux-crontab-校验](https://crontab.guru/#5_4_L_*_*)
 
@@ -175,7 +175,7 @@ W在这里代表的是WeekDay(工作日的意思)，它只能使用在day-of-mon
 ## 5.5、# 字符说明
 
 > The '#' character is allowed for the day-of-week field. This character is used to specify "the nth" XXX day of the month.
-> 
+>
 > If the '#' character is used, there can only be one expression in the day-of-week field ("3#1,6#3" is not valid, since there are two expressions).
 
 `#` 号只能用在 day-of-week字段中，表示某个月的第几个星期几; 同时说明一下 `#`前面的是表示星期几，`#`后面的数字表示第几，还有如果day-of-week使用了`#`。

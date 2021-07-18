@@ -5,13 +5,12 @@ description: "LockSupport"
 showonlyimage: false
 author:     "zhouyang"
 date:     2021-06-15
-published: true 
+published: true
 tags:
     - LockSupport
     - park
     - unpark
-    - AQS
-categories: [ Tech , AQS]
+categories: [Java同步机制]
 mermaid: true
 
 ---
@@ -99,13 +98,13 @@ OK,其实上面的代码就能够展示出LockSupport的绝大部分场景的用
 在LockSupport的注释中有这么一句话
 
 ```java
-/** 
+/**
   Additionally, {@code park} will return if the caller's
   thread was interrupted, and timeout versions are supported. The
   {@code park} method may also return at any other time, for "no
   reason", so in general must be invoked within a loop that rechecks
-  conditions upon return. 
-**/ 
+  conditions upon return.
+**/
 ```
 
 意思是，park()方法会在调用线程被终端的时候返回。
