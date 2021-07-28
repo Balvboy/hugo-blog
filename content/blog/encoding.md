@@ -10,7 +10,7 @@ tags:
     - utf8
     - 字符集
     - 字符编码
-categories: [ 字符编码相关 ]    
+categories: [ 字符编码 ]    
 ---
 
 # 字符编码
