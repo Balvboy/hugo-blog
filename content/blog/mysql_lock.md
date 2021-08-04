@@ -344,24 +344,6 @@ select * from user where age = 10 for update;
 ### show engine innodb status分析
 下面在了解行锁之前，我们先学会怎么分析 MySQL的锁日志，下面我们通过一段日志来分析一下。
 
-下面是表的记录情况：
-```
-+----+--------+------+------+------+
-| id | number | age  | sex  | name |
-+----+--------+------+------+------+
-|  1 |      1 |    1 |    0 | NULL |
-|  3 |      3 |    3 |    1 | NULL |
-|  4 |      4 |    4 |    1 | NULL |
-|  5 |      5 |    5 |    1 | NULL |
-|  7 |      7 |    4 |    1 | NULL |
-| 10 |     10 |   10 |    1 | NULL |
-| 15 |     15 |   15 |    1 | NULL |
-| 20 |     20 |   20 |    1 | NULL |
-| 25 |     25 |   15 |    0 | NULL |
-+----+--------+------+------+------+
-
-```
-
 ```SQL
 /** 查询一个二级索引  **/
 mysql> begin ;
@@ -555,24 +537,1070 @@ select * from user where id in (1,2,,3) for update;
 
 #### 主键范围查询
 
+```SQL
+mysql> begin;
+mysql> select * from user where id < 10 for update;
++----+--------+------+------+------+
+| id | number | age  | sex  | name |
++----+--------+------+------+------+
+|  1 |      1 |    1 |    0 | NULL |
+|  3 |      3 |    3 |    1 | NULL |
+|  4 |      4 |    4 |    1 | NULL |
+|  5 |      5 |    5 |    1 | NULL |
+|  7 |      7 |    4 |    1 | NULL |
++----+--------+------+------+------+
+5 rows in set (0.00 sec)
+
+mysql> show engine innodb status\G
 ```
 
+```yml
+3 lock struct(s), heap size 1136, 6 row lock(s)
+MySQL thread id 43, OS thread handle 123145565257728, query id 3298 localhost root starting
+show engine innodb status
+Trx read view will not see trx with id >= 2008, sees < 2008
+TABLE LOCK table `db_test`.`user` trx id 2008 lock mode IX
+# 首先是表上的 排他意向锁
+RECORD LOCKS space id 11 page no 4 n bits 80 index PRIMARY of table `db_test`.`user` trx id 2008 lock_mode X
+# 然后是主键上的邻间锁
+Record lock, heap no 2 PHYSICAL RECORD: n_fields 7; compact format; info bits 0
+ 0: len 4; hex 80000001; asc     ;;
+# 对主键为1的索引加next-key lock，锁住的范围是 主键为1记录和上一条记录之间的间隙，和1这条记录本身。因为1之前没有记录了，
+# 所以锁住范围是 (-∞,1]。
+# 这里因为1之前没有记录了，所以使用的数据页中一条虚拟的记录:Infimum，用来表示负无穷
+ 1: len 6; hex 00000000073a; asc      :;;
+# 最近更新的事务id
+ 2: len 7; hex 01000000f00c66; asc       f;;
+# 回滚指针
+ 3: len 4; hex 80000001; asc     ;;
+ 4: len 4; hex 80000001; asc     ;;
+ 5: len 1; hex 80; asc  ;;
+ 6: SQL NULL;
+
+Record lock, heap no 3 PHYSICAL RECORD: n_fields 7; compact format; info bits 0
+ 0: len 4; hex 80000003; asc     ;;
+# 对主键为3的索引添加 next-key lock
+# 锁住的范围为(1,3]
+ 1: len 6; hex 0000000006fc; asc       ;;
+ 2: len 7; hex 82000000ce0110; asc        ;;
+ 3: len 4; hex 80000003; asc     ;;
+ 4: len 4; hex 80000003; asc     ;;
+ 5: len 1; hex 81; asc  ;;
+ 6: SQL NULL;
+
+Record lock, heap no 4 PHYSICAL RECORD: n_fields 7; compact format; info bits 0
+ 0: len 4; hex 80000004; asc     ;;
+# 对主键为4的索引添加 next-key lock
+# 锁住的范围为(3,4]
+ 1: len 6; hex 0000000006f3; asc       ;;
+ 2: len 7; hex 81000000cb0110; asc        ;;
+ 3: len 4; hex 80000004; asc     ;;
+ 4: len 4; hex 80000004; asc     ;;
+ 5: len 1; hex 81; asc  ;;
+ 6: SQL NULL;
+
+Record lock, heap no 5 PHYSICAL RECORD: n_fields 7; compact format; info bits 0
+ 0: len 4; hex 80000005; asc     ;;
+# 对主键为5的索引添加 next-key lock
+# 锁住的范围为(4,5]
+ 1: len 6; hex 0000000006e9; asc       ;;
+ 2: len 7; hex 81000000c8011d; asc        ;;
+ 3: len 4; hex 80000005; asc     ;;
+ 4: len 4; hex 80000005; asc     ;;
+ 5: len 1; hex 81; asc  ;;
+ 6: SQL NULL;
+
+Record lock, heap no 6 PHYSICAL RECORD: n_fields 7; compact format; info bits 0
+ 0: len 4; hex 80000007; asc     ;;
+# 对主键为7的索引添加 next-key lock
+# 锁住的范围为(5,7]
+ 1: len 6; hex 0000000006f4; asc       ;;
+ 2: len 7; hex 82000000cb0110; asc        ;;
+ 3: len 4; hex 80000007; asc     ;;
+ 4: len 4; hex 80000004; asc     ;;
+ 5: len 1; hex 81; asc  ;;
+ 6: SQL NULL;
+
+RECORD LOCKS space id 11 page no 4 n bits 80 index PRIMARY of table `db_test`.`user` trx id 2008 lock_mode X locks gap before rec
+# 这里又对主键，添加了一个 gap lock
+Record lock, heap no 7 PHYSICAL RECORD: n_fields 7; compact format; info bits 0
+ 0: len 4; hex 8000000a; asc     ;;
+# 对主键为10的索引添加 gap lock
+# 锁住的范围是 (7,10)
+ 1: len 6; hex 0000000006e9; asc       ;;
+ 2: len 7; hex 81000000c8012a; asc       *;;
+ 3: len 4; hex 8000000a; asc     ;;
+ 4: len 4; hex 8000000a; asc     ;;
+ 5: len 1; hex 81; asc  ;;
+ 6: SQL NULL;
 
 ```
 
+综上，我们可以得出针对 `select * from user where id < 10 for update;`这个语句，锁住的区间是
+
+- (-∞,1]
+- (1,3]
+- (3,4]
+- (4,5]
+- (5,7]
+- (7,10)
+
+其中 [1,3,4,5,7]都是sql查询出来的主键，所以我们大概可以得出一个结论就是
+
+- 主键范围查询，会锁住查询出来的主键之间的间隙，以及查询出来的记录
+- 另外还会锁住查询出来的最小的记录和上一条记录的间隙，以及最大的记录和下一条记录的间隙。
+  - 如果没有上一小记录，就是到负无穷
+  - 如果没有下一条，就是到正无穷
 
 
+下面我们来验证一下
+
+```SQL
+mysql> begin;
+mysql> select * from user where id >7 and id < 20 for update;
++----+--------+------+------+------+
+| id | number | age  | sex  | name |
++----+--------+------+------+------+
+| 10 |     10 |   10 |    1 | NULL |
+| 15 |     15 |   15 |    1 | NULL |
++----+--------+------+------+------+
+```
+
+根据上面的结论可以得出，最终锁定的区间是
+
+- （7,10]
+- (10,15]
+- (15,20)
+
+查后我们查看锁状态
+
+```yml
+3 lock struct(s), heap size 1136, 3 row lock(s)
+MySQL thread id 43, OS thread handle 123145565257728, query id 3358 localhost root starting
+show engine innodb status
+Trx read view will not see trx with id >= 2009, sees < 2009
+TABLE LOCK table `db_test`.`user` trx id 2009 lock mode IX
+RECORD LOCKS space id 11 page no 4 n bits 80 index PRIMARY of table `db_test`.`user` trx id 2009 lock_mode X
+# 首先是 next-key lock
+Record lock, heap no 7 PHYSICAL RECORD: n_fields 7; compact format; info bits 0
+ 0: len 4; hex 8000000a; asc     ;;
+# 主键10 添加 next-key lock
+# 区间为(7,10]
+ 1: len 6; hex 0000000006e9; asc       ;;
+ 2: len 7; hex 81000000c8012a; asc       *;;
+ 3: len 4; hex 8000000a; asc     ;;
+ 4: len 4; hex 8000000a; asc     ;;
+ 5: len 1; hex 81; asc  ;;
+ 6: SQL NULL;
+
+Record lock, heap no 8 PHYSICAL RECORD: n_fields 7; compact format; info bits 0
+ 0: len 4; hex 8000000f; asc     ;;
+# 主键15 添加 next-key lock
+# 区间为(10,15]
+ 1: len 6; hex 0000000006e9; asc       ;;
+ 2: len 7; hex 81000000c80137; asc       7;;
+ 3: len 4; hex 8000000f; asc     ;;
+ 4: len 4; hex 8000000f; asc     ;;
+ 5: len 1; hex 81; asc  ;;
+ 6: SQL NULL;
+
+RECORD LOCKS space id 11 page no 4 n bits 80 index PRIMARY of table `db_test`.`user` trx id 2009 lock_mode X locks gap before rec
+# 然后是 间隙锁
+Record lock, heap no 9 PHYSICAL RECORD: n_fields 7; compact format; info bits 0
+ 0: len 4; hex 80000014; asc     ;;
+# 主键20 添加间隙锁
+ 1: len 6; hex 0000000006e9; asc       ;;
+ 2: len 7; hex 81000000c80144; asc       D;;
+ 3: len 4; hex 80000014; asc     ;;
+ 4: len 4; hex 80000014; asc     ;;
+ 5: len 1; hex 81; asc  ;;
+ 6: SQL NULL;
+
+```
+
+ok 全中！说明这个结论是符合的。
 
 ### 查询唯一索引
+
+#### 唯一索引的等值查询
+
+```SQL
+mysql> begin;
+Query OK, 0 rows affected (0.17 sec)
+
+mysql> select * from user where number = 10 for update;
++----+--------+------+------+------+
+| id | number | age  | sex  | name |
++----+--------+------+------+------+
+| 10 |     10 |   10 |    1 | NULL |
++----+--------+------+------+------+
+1 row in set (0.03 sec)
+
+mysql> show engine innodb status\G
+```
+
+```yml
+3 lock struct(s), heap size 1136, 2 row lock(s)
+MySQL thread id 43, OS thread handle 123145565257728, query id 3362 localhost root starting
+show engine innodb status
+TABLE LOCK table `db_test`.`user` trx id 2010 lock mode IX
+# 表上加一项排它锁
+RECORD LOCKS space id 11 page no 5 n bits 80 index uk_number of table `db_test`.`user` trx id 2010 lock_mode X locks rec but not gap
+# 在唯一索引上添加 普通记录锁
+Record lock, heap no 7 PHYSICAL RECORD: n_fields 2; compact format; info bits 0
+ 0: len 4; hex 8000000a; asc     ;;
+ # 唯一索引
+ 1: len 4; hex 8000000a; asc     ;;
+ # 唯一索引，对应的主键索引
+
+RECORD LOCKS space id 11 page no 4 n bits 80 index PRIMARY of table `db_test`.`user` trx id 2010 lock_mode X locks rec but not gap
+# 在主键上添加 普通记录锁
+Record lock, heap no 7 PHYSICAL RECORD: n_fields 7; compact format; info bits 0
+ 0: len 4; hex 8000000a; asc     ;;
+ 1: len 6; hex 0000000006e9; asc       ;;
+ 2: len 7; hex 81000000c8012a; asc       *;;
+ 3: len 4; hex 8000000a; asc     ;;
+ 4: len 4; hex 8000000a; asc     ;;
+ 5: len 1; hex 81; asc  ;;
+ 6: SQL NULL;
+
+```
+
+我们看到唯一索引的等值查询和主键索引和相似，都是对记录所在的索引添加普通记录锁。
+只不过会多添加一个对唯一索引的记录锁。
+
+`通过这里我们可以发现，当我们使用不同的索引进行查询的时候，虽然查询的记录有可能是同一条，但是加锁情况是不尽相同的。原因就是InnoDB的锁时加载索引上，而不是记录上的。`
+
+#### 唯一索引的范围查询
+
+```SQL
+mysql> begin;
+Query OK, 0 rows affected (0.00 sec)
+
+mysql> select * from user where number > 10 for update;
++----+--------+------+------+------+
+| id | number | age  | sex  | name |
++----+--------+------+------+------+
+| 15 |     15 |   15 |    1 | NULL |
+| 20 |     20 |   20 |    1 | NULL |
+| 25 |     25 |   15 |    0 | NULL |
++----+--------+------+------+------+
+3 rows in set (0.00 sec)
+
+mysql> show engine innodb status\G
+```
+
+在查看锁状态之前我们先做一个猜测
+
+- 既然唯一索引的等值查询，是和主键基本类似，只是多加了一个对唯一索引的锁
+- 那么范围查询会不会也是一样呢，只是在主键的基础上，添加对唯一索引一样的逻辑呢？
+
+下面我们来验证一下
+
+```yml
+3 lock struct(s), heap size 1136, 7 row lock(s)
+MySQL thread id 43, OS thread handle 123145565257728, query id 3371 localhost root starting
+show engine innodb status
+Trx read view will not see trx with id >= 2012, sees < 2012
+TABLE LOCK table `db_test`.`user` trx id 2012 lock mode IX
+# 表上添加意向排他锁
+RECORD LOCKS space id 11 page no 5 n bits 80 index uk_number of table `db_test`.`user` trx id 2012 lock_mode X
+#在uk_number 上添加 next-key lock
+Record lock, heap no 1 PHYSICAL RECORD: n_fields 1; compact format; info bits 0
+ 0: len 8; hex 73757072656d756d; asc supremum;;
+# supremum 是数据页中虚拟的最大值,一定会大于所有记录的索引值，给这个索引值添加 next-key lock
+# 表示锁上的区间为查询出来的记录中索引最大值，到正无穷，也就是(25,+∞)
+Record lock, heap no 8 PHYSICAL RECORD: n_fields 2; compact format; info bits 0
+ 0: len 4; hex 8000000f; asc     ;;
+# 给查询出来的记录的唯一索引加锁，唯一索引为 15
+# 范围是 (10,15]
+ 1: len 4; hex 8000000f; asc     ;;
+
+Record lock, heap no 9 PHYSICAL RECORD: n_fields 2; compact format; info bits 0
+ 0: len 4; hex 80000014; asc     ;;
+ # 给查询出来的记录的唯一索引加锁，唯一索引为 20
+ # 范围是 (15,20]
+ 1: len 4; hex 80000014; asc     ;;
+
+Record lock, heap no 10 PHYSICAL RECORD: n_fields 2; compact format; info bits 0
+ 0: len 4; hex 80000019; asc     ;;
+ # 给查询出来的记录的唯一索引加锁，唯一索引为 25
+ # 范围是 (20,25]
+ 1: len 4; hex 80000019; asc     ;;
+
+RECORD LOCKS space id 11 page no 4 n bits 80 index PRIMARY of table `db_test`.`user` trx id 2012 lock_mode X locks rec but not gap
+# 给查询出来的对应记录的主键加锁，注意这里添加是不是 next-key Lock了，而是普通的记录锁了
+Record lock, heap no 8 PHYSICAL RECORD: n_fields 7; compact format; info bits 0
+ 0: len 4; hex 8000000f; asc     ;;
+# 给值15的主键索引加锁
+ 1: len 6; hex 0000000006e9; asc       ;;
+ 2: len 7; hex 81000000c80137; asc       7;;
+ 3: len 4; hex 8000000f; asc     ;;
+ 4: len 4; hex 8000000f; asc     ;;
+ 5: len 1; hex 81; asc  ;;
+ 6: SQL NULL;
+
+Record lock, heap no 9 PHYSICAL RECORD: n_fields 7; compact format; info bits 0
+ 0: len 4; hex 80000014; asc     ;;
+# 给值20的主键索引加锁
+ 1: len 6; hex 0000000006e9; asc       ;;
+ 2: len 7; hex 81000000c80144; asc       D;;
+ 3: len 4; hex 80000014; asc     ;;
+ 4: len 4; hex 80000014; asc     ;;
+ 5: len 1; hex 81; asc  ;;
+ 6: SQL NULL;
+
+Record lock, heap no 10 PHYSICAL RECORD: n_fields 7; compact format; info bits 0
+ 0: len 4; hex 80000019; asc     ;;
+# 给值25的主键索引加锁
+ 1: len 6; hex 000000000700; asc       ;;
+ 2: len 7; hex 82000000d00110; asc        ;;
+ 3: len 4; hex 80000019; asc     ;;
+ 4: len 4; hex 8000000f; asc     ;;
+ 5: len 1; hex 80; asc  ;;
+ 6: SQL NULL;
+
+```
+
+ok，现在结论出来了，`select * from user where number > 10 for update`的加锁结果如下
+
+- 唯一索引
+  - (10,15]
+  - (15,20]
+  - (20,25]
+  - (25,+∞]
+- 主键索引
+  - [15]
+  - [20]
+  - [25]
+
+和我们刚刚预测的有些许不同
+
+- 唯一索引确实是按照刚才的逻辑添加的锁。
+  - 但又不是完全是，下面我们用另一个sql再测试一下
+- 主键只是对查询出来的那些记录的主键，添加了普通记录锁。
+
+
+在一次测试，这次我们使用和上面主键查询一样的范围
+
+```SQL
+mysql> begin;
+mysql> select * from user where number < 10 for update;
++----+--------+------+------+------+
+| id | number | age  | sex  | name |
++----+--------+------+------+------+
+|  1 |      1 |    1 |    0 | NULL |
+|  3 |      3 |    3 |    1 | NULL |
+|  4 |      4 |    4 |    1 | NULL |
+|  5 |      5 |    5 |    1 | NULL |
+|  7 |      7 |    4 |    1 | NULL |
++----+--------+------+------+------+
+5 rows in set (0.00 sec)
+
+mysql> show engine innodb status\G
+
+```
+
+锁状态如下：
+
+```yml
+3 lock struct(s), heap size 1136, 11 row lock(s)
+MySQL thread id 43, OS thread handle 123145565257728, query id 3386 localhost root starting
+show engine innodb status
+TABLE LOCK table `db_test`.`user` trx id 2015 lock mode IX
+RECORD LOCKS space id 11 page no 5 n bits 80 index uk_number of table `db_test`.`user` trx id 2015 lock_mode X
+Record lock, heap no 2 PHYSICAL RECORD: n_fields 2; compact format; info bits 0
+ 0: len 4; hex 80000001; asc     ;;
+ 1: len 4; hex 80000001; asc     ;;
+
+Record lock, heap no 3 PHYSICAL RECORD: n_fields 2; compact format; info bits 0
+ 0: len 4; hex 80000003; asc     ;;
+ 1: len 4; hex 80000003; asc     ;;
+
+Record lock, heap no 4 PHYSICAL RECORD: n_fields 2; compact format; info bits 0
+ 0: len 4; hex 80000004; asc     ;;
+ 1: len 4; hex 80000004; asc     ;;
+
+Record lock, heap no 5 PHYSICAL RECORD: n_fields 2; compact format; info bits 0
+ 0: len 4; hex 80000005; asc     ;;
+ 1: len 4; hex 80000005; asc     ;;
+
+Record lock, heap no 6 PHYSICAL RECORD: n_fields 2; compact format; info bits 0
+ 0: len 4; hex 80000007; asc     ;;
+ 1: len 4; hex 80000007; asc     ;;
+
+Record lock, heap no 7 PHYSICAL RECORD: n_fields 2; compact format; info bits 0
+ 0: len 4; hex 8000000a; asc     ;;
+ 1: len 4; hex 8000000a; asc     ;;
+
+RECORD LOCKS space id 11 page no 4 n bits 80 index PRIMARY of table `db_test`.`user` trx id 2015 lock_mode X locks rec but not gap
+Record lock, heap no 2 PHYSICAL RECORD: n_fields 7; compact format; info bits 0
+ 0: len 4; hex 80000001; asc     ;;
+ 1: len 6; hex 00000000073a; asc      :;;
+ 2: len 7; hex 01000000f00c66; asc       f;;
+ 3: len 4; hex 80000001; asc     ;;
+ 4: len 4; hex 80000001; asc     ;;
+ 5: len 1; hex 80; asc  ;;
+ 6: SQL NULL;
+
+Record lock, heap no 3 PHYSICAL RECORD: n_fields 7; compact format; info bits 0
+ 0: len 4; hex 80000003; asc     ;;
+ 1: len 6; hex 0000000006fc; asc       ;;
+ 2: len 7; hex 82000000ce0110; asc        ;;
+ 3: len 4; hex 80000003; asc     ;;
+ 4: len 4; hex 80000003; asc     ;;
+ 5: len 1; hex 81; asc  ;;
+ 6: SQL NULL;
+
+Record lock, heap no 4 PHYSICAL RECORD: n_fields 7; compact format; info bits 0
+ 0: len 4; hex 80000004; asc     ;;
+ 1: len 6; hex 0000000006f3; asc       ;;
+ 2: len 7; hex 81000000cb0110; asc        ;;
+ 3: len 4; hex 80000004; asc     ;;
+ 4: len 4; hex 80000004; asc     ;;
+ 5: len 1; hex 81; asc  ;;
+ 6: SQL NULL;
+
+Record lock, heap no 5 PHYSICAL RECORD: n_fields 7; compact format; info bits 0
+ 0: len 4; hex 80000005; asc     ;;
+ 1: len 6; hex 0000000006e9; asc       ;;
+ 2: len 7; hex 81000000c8011d; asc        ;;
+ 3: len 4; hex 80000005; asc     ;;
+ 4: len 4; hex 80000005; asc     ;;
+ 5: len 1; hex 81; asc  ;;
+ 6: SQL NULL;
+
+Record lock, heap no 6 PHYSICAL RECORD: n_fields 7; compact format; info bits 0
+ 0: len 4; hex 80000007; asc     ;;
+ 1: len 6; hex 0000000006f4; asc       ;;
+ 2: len 7; hex 82000000cb0110; asc        ;;
+ 3: len 4; hex 80000007; asc     ;;
+ 4: len 4; hex 80000004; asc     ;;
+ 5: len 1; hex 81; asc  ;;
+ 6: SQL NULL;
+
+```
+ 这里的大部分和[主键范围查询](/blog/mysql_lock/#主键范围查询)是一致的。
+
+ <span style="color:green">唯一的不同就是针对最后一条唯一索引，并没有使用 gap lock</span>
+
+ 主键范围查询针对最后一条记录是一个 间隙锁
+
+ ```yml
+ RECORD LOCKS space id 11 page no 4 n bits 80 index PRIMARY of table `db_test`.`user` trx id 2008 lock_mode X locks gap before rec
+# 这里又对主键，添加了一个 gap lock
+Record lock, heap no 7 PHYSICAL RECORD: n_fields 7; compact format; info bits 0
+ 0: len 4; hex 8000000a; asc     ;;
+# 对主键为10的索引添加 gap lock
+# 锁住的范围是 (7,10)
+ 1: len 6; hex 0000000006e9; asc       ;;
+ 2: len 7; hex 81000000c8012a; asc       *;;
+ 3: len 4; hex 8000000a; asc     ;;
+ 4: len 4; hex 8000000a; asc     ;;
+ 5: len 1; hex 81; asc  ;;
+ 6: SQL NULL;
+
+ ```
+
+ 唯一索引是这样的，是一个next-key lock
+
+```yml
+RECORD LOCKS space id 11 page no 5 n bits 80 index uk_number of table `db_test`.`user` trx id 2015 lock_mode X
+Record lock, heap no 7 PHYSICAL RECORD: n_fields 2; compact format; info bits 0
+ 0: len 4; hex 8000000a; asc     ;;
+ 1: len 4; hex 8000000a; asc     ;;
+```
+
+简单来说就是 主键查询和 唯一索引查出来的记录都是 [1,3,4,5,7]。id为7点下一条也同样都是 10。
+只不过，针对 10这条记录的索引
+
+- 主键加的是一个 gap lock，不包括 10这条记录
+- 唯一索引，假的是 next-key lock，包括10这条记录。
+- 也就是使用唯一索引和主键索引当查询出的记录一致的情况下，唯一索引会比主键的锁范围大一点。
+
+所以唯一索引范围查询的结论需要更新一下
+
+- 对查询出来的记录的唯一索引，添加next-key lock，也就是锁住记录，和上一条记录值之间的间隙
+- 对查询出记录中唯一索引最大的，下一个索引，添加next-key lock，
+  - 比如这次查询出来的记录中最大的是7，那么对7的下一个10（索引顺序，非记录顺序），添加 next-key lock
+  - 也就(7,10],这里虽然没有查出来10，但是也把是10锁住。
+- 对查询出来记录的主键，添加普通记录锁
+
+![](/img/uk1.png)
+我们先看唯一主键的操作，发现右边的左右被阻塞了。
+
+![](/img/uk2.png)
+我们再看针对主键的操作，发现右边的操作没有被阻塞。
 
 
 ### 查询二级索引
 
+#### 二级索引的等值查询
+
+这个可以直接参考[show-engine-innodb-status分析](/blog/mysql_lock/#show-engine-innodb-status分析)。我们这里总结一下结论
+
+比如使用idx_age 查询的
+
+- 给查询出来记录的idx_age索引添加next-key lock
+  - 也就是会锁住该条记录的二级索引
+  - <span style="color:red">和这个二级索引，和它上一个二级索引之间的间隙(这个上一条的概念，不是记录中的上一条，而是在索引结构中的上一个索引)</span>
+  - 这个我觉得是可以理解的，因为记录的顺序是和聚簇索引保持一致的，而一个表中只会有一个聚簇索引，那就是主键。所以二级索引的顺序必然和记录顺序不一致。
+  - 而innodb的索引是加在索引上的，所以在对二级索引加锁的时候，必然要按照二级索引的顺序来处理。
+- 对查询出记录中索引值最大的，下一个索引，添加gap lock
+  - 比如样例中，查出来记录的索引最大为15，它的下一个索引为20
+  - 也就是(15,20)
+- 给查询出来记录的主键索引，添加普通记录锁
+
+#### 二级索引使用范围查询
+
+```SQL
+mysql> begin;
+Query OK, 0 rows affected (0.00 sec)
+
+mysql> select * from user where age >10 for update;
++----+--------+------+------+------+
+| id | number | age  | sex  | name |
++----+--------+------+------+------+
+| 15 |     15 |   15 |    1 | NULL |
+| 25 |     25 |   15 |    0 | NULL |
+| 20 |     20 |   20 |    1 | NULL |
++----+--------+------+------+------+
+3 rows in set (0.01 sec)
+
+mysql> show engine innodb status\G
+```
+在查看之前我们还是结合着上面唯一索引范围查询的处理逻辑，预测一下
+
+
+- 对于查询出来记录的二级索引，添加next-key lock
+- 对于查出来记录中索引值最大的，的下一条索引，同样添加 next-key lock
+- 针对主键索引，只会对查询出来的记录加普通行锁
+
+来验证一下
+
+```yml
+
+3 lock struct(s), heap size 1136, 7 row lock(s)
+MySQL thread id 43, OS thread handle 123145565257728, query id 3377 localhost root starting
+show engine innodb status
+TABLE LOCK table `db_test`.`user` trx id 2013 lock mode IX
+# 表上添加排他意向锁
+RECORD LOCKS space id 11 page no 6 n bits 80 index idx_age of table `db_test`.`user` trx id 2013 lock_mode X
+# 给idx_age 添加 next-key lock
+Record lock, heap no 1 PHYSICAL RECORD: n_fields 1; compact format; info bits 0
+ 0: len 8; hex 73757072656d756d; asc supremum;;
+# 和上面唯一索引一样的逻辑，锁住记录中age最大值，到正无穷的区间
+# (20,+∞)
+Record lock, heap no 8 PHYSICAL RECORD: n_fields 2; compact format; info bits 0
+ 0: len 4; hex 8000000f; asc     ;;
+# 给idx_age 为15 的索引 添加 next-key lock
+# 锁住的区间是 (10,15]
+ 1: len 4; hex 8000000f; asc     ;;
+
+Record lock, heap no 9 PHYSICAL RECORD: n_fields 2; compact format; info bits 0
+ 0: len 4; hex 8000000f; asc     ;;
+ # 给另一个idx_age 为15 的索引 添加 next-key lock
+ # 虽然索引值都是15，但是毕竟是2个索引，所以都要加锁
+ # 锁住的区间是 (15,15]
+ 1: len 4; hex 80000019; asc     ;;
+
+Record lock, heap no 10 PHYSICAL RECORD: n_fields 2; compact format; info bits 0
+ 0: len 4; hex 80000014; asc     ;;
+ # 给idx_age 为20 的索引 添加 next-key lock
+ # 锁住的区间是 (15,20]
+ 1: len 4; hex 80000014; asc     ;;
+
+RECORD LOCKS space id 11 page no 4 n bits 80 index PRIMARY of table `db_test`.`user` trx id 2013 lock_mode X locks rec but not gap
+# 给主键添加普通行锁，下面就不一一写了，参照上面的即可
+Record lock, heap no 8 PHYSICAL RECORD: n_fields 7; compact format; info bits 0
+ 0: len 4; hex 8000000f; asc     ;;
+ 1: len 6; hex 0000000006e9; asc       ;;
+ 2: len 7; hex 81000000c80137; asc       7;;
+ 3: len 4; hex 8000000f; asc     ;;
+ 4: len 4; hex 8000000f; asc     ;;
+ 5: len 1; hex 81; asc  ;;
+ 6: SQL NULL;
+
+Record lock, heap no 9 PHYSICAL RECORD: n_fields 7; compact format; info bits 0
+ 0: len 4; hex 80000014; asc     ;;
+ 1: len 6; hex 0000000006e9; asc       ;;
+ 2: len 7; hex 81000000c80144; asc       D;;
+ 3: len 4; hex 80000014; asc     ;;
+ 4: len 4; hex 80000014; asc     ;;
+ 5: len 1; hex 81; asc  ;;
+ 6: SQL NULL;
+
+Record lock, heap no 10 PHYSICAL RECORD: n_fields 7; compact format; info bits 0
+ 0: len 4; hex 80000019; asc     ;;
+ 1: len 6; hex 000000000700; asc       ;;
+ 2: len 7; hex 82000000d00110; asc        ;;
+ 3: len 4; hex 80000019; asc     ;;
+ 4: len 4; hex 8000000f; asc     ;;
+ 5: len 1; hex 80; asc  ;;
+ 6: SQL NULL;
+
+```
+
+首先我们看到，行锁中只有两类，next-key lock 和 普通行锁
+下面关注看 next-key lock
+
+- 首先查询出来的3条记录的索引全部被加上了next-key lock 没有问题
+
+下面我们来看猜测规则的第二条，`给记录中索引值最大的下一条索引，添加next-key lock`。
+
+记录中二级索引最大的是20，在user表中，已经没有其他记录的idx_age索引比它更大了，InnoDB给数据页中的最大虚拟记录的索引添加了 next-key lock。
+
+```yml
+Record lock, heap no 1 PHYSICAL RECORD: n_fields 1; compact format; info bits 0
+ 0: len 8; hex 73757072656d756d; asc supremum;;
+```
+
+ok，这样说明我们猜测的结论还是正确的
+
+- 对于查询出来记录的二级索引，添加next-key lock
+- 对于查出来记录中索引值最大的，的下一条索引，同样添加 next-key lock
+  - 如果没有下一条索引了，则给`supremum`添加 next-key lock
+- 针对主键索引，只会对查询出来的记录加普通行锁
+
+
+### 不使用索引进行查询
+
+
+```SQL
+begin;
+Query OK, 0 rows affected (0.00 sec)
+
+mysql> select * from user where sex = 1 for update;
++----+--------+------+------+------+
+| id | number | age  | sex  | name |
++----+--------+------+------+------+
+|  3 |      3 |    3 |    1 | NULL |
+|  4 |      4 |    4 |    1 | NULL |
+|  5 |      5 |    5 |    1 | NULL |
+|  7 |      7 |    4 |    1 | NULL |
+| 10 |     10 |   10 |    1 | NULL |
+| 15 |     15 |   15 |    1 | NULL |
+| 20 |     20 |   20 |    1 | NULL |
++----+--------+------+------+------+
+7 rows in set (0.00 sec)
+
+mysql> show engine innodb status\G
+```
+
+```yml
+2 lock struct(s), heap size 1136, 10 row lock(s)
+MySQL thread id 43, OS thread handle 123145565257728, query id 3427 localhost root starting
+show engine innodb status
+TABLE LOCK table `db_test`.`user` trx id 2023 lock mode IX
+# 排他意向锁
+RECORD LOCKS space id 11 page no 4 n bits 80 index PRIMARY of table `db_test`.`user` trx id 2023 lock_mode X
+# 给主键添加 next-key lock
+Record lock, heap no 1 PHYSICAL RECORD: n_fields 1; compact format; info bits 0
+ 0: len 8; hex 73757072656d756d; asc supremum;;
+# 给最大值添加 next-key lock
+Record lock, heap no 2 PHYSICAL RECORD: n_fields 7; compact format; info bits 0
+ 0: len 4; hex 80000001; asc     ;;
+ 1: len 6; hex 00000000073a; asc      :;;
+ 2: len 7; hex 01000000f00c66; asc       f;;
+ 3: len 4; hex 80000001; asc     ;;
+ 4: len 4; hex 80000001; asc     ;;
+ 5: len 1; hex 80; asc  ;;
+ 6: SQL NULL;
+
+Record lock, heap no 3 PHYSICAL RECORD: n_fields 7; compact format; info bits 0
+ 0: len 4; hex 80000003; asc     ;;
+ 1: len 6; hex 0000000006fc; asc       ;;
+ 2: len 7; hex 82000000ce0110; asc        ;;
+ 3: len 4; hex 80000003; asc     ;;
+ 4: len 4; hex 80000003; asc     ;;
+ 5: len 1; hex 81; asc  ;;
+ 6: SQL NULL;
+
+Record lock, heap no 4 PHYSICAL RECORD: n_fields 7; compact format; info bits 0
+ 0: len 4; hex 80000004; asc     ;;
+ 1: len 6; hex 0000000006f3; asc       ;;
+ 2: len 7; hex 81000000cb0110; asc        ;;
+ 3: len 4; hex 80000004; asc     ;;
+ 4: len 4; hex 80000004; asc     ;;
+ 5: len 1; hex 81; asc  ;;
+ 6: SQL NULL;
+
+Record lock, heap no 5 PHYSICAL RECORD: n_fields 7; compact format; info bits 0
+ 0: len 4; hex 80000005; asc     ;;
+ 1: len 6; hex 0000000006e9; asc       ;;
+ 2: len 7; hex 81000000c8011d; asc        ;;
+ 3: len 4; hex 80000005; asc     ;;
+ 4: len 4; hex 80000005; asc     ;;
+ 5: len 1; hex 81; asc  ;;
+ 6: SQL NULL;
+
+Record lock, heap no 6 PHYSICAL RECORD: n_fields 7; compact format; info bits 0
+ 0: len 4; hex 80000007; asc     ;;
+ 1: len 6; hex 0000000006f4; asc       ;;
+ 2: len 7; hex 82000000cb0110; asc        ;;
+ 3: len 4; hex 80000007; asc     ;;
+ 4: len 4; hex 80000004; asc     ;;
+ 5: len 1; hex 81; asc  ;;
+ 6: SQL NULL;
+
+Record lock, heap no 7 PHYSICAL RECORD: n_fields 7; compact format; info bits 0
+ 0: len 4; hex 8000000a; asc     ;;
+ 1: len 6; hex 0000000006e9; asc       ;;
+ 2: len 7; hex 81000000c8012a; asc       *;;
+ 3: len 4; hex 8000000a; asc     ;;
+ 4: len 4; hex 8000000a; asc     ;;
+ 5: len 1; hex 81; asc  ;;
+ 6: SQL NULL;
+
+Record lock, heap no 8 PHYSICAL RECORD: n_fields 7; compact format; info bits 0
+ 0: len 4; hex 8000000f; asc     ;;
+ 1: len 6; hex 0000000006e9; asc       ;;
+ 2: len 7; hex 81000000c80137; asc       7;;
+ 3: len 4; hex 8000000f; asc     ;;
+ 4: len 4; hex 8000000f; asc     ;;
+ 5: len 1; hex 81; asc  ;;
+ 6: SQL NULL;
+
+Record lock, heap no 9 PHYSICAL RECORD: n_fields 7; compact format; info bits 0
+ 0: len 4; hex 80000014; asc     ;;
+ 1: len 6; hex 0000000006e9; asc       ;;
+ 2: len 7; hex 81000000c80144; asc       D;;
+ 3: len 4; hex 80000014; asc     ;;
+ 4: len 4; hex 80000014; asc     ;;
+ 5: len 1; hex 81; asc  ;;
+ 6: SQL NULL;
+
+Record lock, heap no 10 PHYSICAL RECORD: n_fields 7; compact format; info bits 0
+ 0: len 4; hex 80000019; asc     ;;
+ 1: len 6; hex 000000000700; asc       ;;
+ 2: len 7; hex 82000000d00110; asc        ;;
+ 3: len 4; hex 80000019; asc     ;;
+ 4: len 4; hex 8000000f; asc     ;;
+ 5: len 1; hex 80; asc  ;;
+ 6: SQL NULL;
+
+```
+
+我们看到，当使用非索引字段查询，并加锁时
+
+- 会给主键添加 next-key lock
+- 然后最重要的一点是，会锁住所有的记录和间隙
+  - 所以最终的锁定区间是
+  - (-∞,1]
+  - ... n条记录和它们的间隙
+  - (20,+∞)
+
+
+那还有另一种情况，如果这个表中连主键都没有呢？
+
+```SQL
+mysql> begin;
+Query OK, 0 rows affected (0.04 sec)
+
+mysql> select * from user_not_index where number = 1 for update;
++----+--------+------+------+------+
+| id | number | age  | sex  | name |
++----+--------+------+------+------+
+|  1 |      1 |    1 |    0 | NULL |
++----+--------+------+------+------+
+1 row in set (0.02 sec)
+
+mysql> show engine innodb status\G
+
+```
+
+```yml
+2 lock struct(s), heap size 1136, 10 row lock(s)
+MySQL thread id 43, OS thread handle 123145565257728, query id 3421 localhost root starting
+show engine innodb status
+TABLE LOCK table `db_test`.`user_not_index` trx id 2022 lock mode IX
+# 表上添加意向排他锁
+RECORD LOCKS space id 12 page no 4 n bits 80 index GEN_CLUST_INDEX of table `db_test`.`user_not_index` trx id 2022 lock_mode X
+# 给GEN_CLUST_INDEX 索引添加 next-key lock
+Record lock, heap no 1 PHYSICAL RECORD: n_fields 1; compact format; info bits 0
+ 0: len 8; hex 73757072656d756d; asc supremum;;
+
+Record lock, heap no 2 PHYSICAL RECORD: n_fields 8; compact format; info bits 0
+ 0: len 6; hex 000000000200; asc       ;;
+ 1: len 6; hex 00000000075f; asc      _;;
+ 2: len 7; hex 820000013b0110; asc     ;  ;;
+ 3: len 4; hex 80000001; asc     ;;
+ 4: len 4; hex 80000001; asc     ;;
+ 5: len 4; hex 80000001; asc     ;;
+ 6: len 1; hex 80; asc  ;;
+ 7: SQL NULL;
+
+Record lock, heap no 3 PHYSICAL RECORD: n_fields 8; compact format; info bits 0
+ 0: len 6; hex 000000000201; asc       ;;
+ 1: len 6; hex 00000000075f; asc      _;;
+ 2: len 7; hex 820000013b011f; asc     ;  ;;
+ 3: len 4; hex 80000003; asc     ;;
+ 4: len 4; hex 80000003; asc     ;;
+ 5: len 4; hex 80000003; asc     ;;
+ 6: len 1; hex 81; asc  ;;
+ 7: SQL NULL;
+
+Record lock, heap no 4 PHYSICAL RECORD: n_fields 8; compact format; info bits 0
+ 0: len 6; hex 000000000202; asc       ;;
+ 1: len 6; hex 00000000075f; asc      _;;
+ 2: len 7; hex 820000013b012e; asc     ; .;;
+ 3: len 4; hex 80000004; asc     ;;
+ 4: len 4; hex 80000004; asc     ;;
+ 5: len 4; hex 80000004; asc     ;;
+ 6: len 1; hex 81; asc  ;;
+ 7: SQL NULL;
+
+Record lock, heap no 5 PHYSICAL RECORD: n_fields 8; compact format; info bits 0
+ 0: len 6; hex 000000000203; asc       ;;
+ 1: len 6; hex 00000000075f; asc      _;;
+ 2: len 7; hex 820000013b013d; asc     ; =;;
+ 3: len 4; hex 80000005; asc     ;;
+ 4: len 4; hex 80000005; asc     ;;
+ 5: len 4; hex 80000005; asc     ;;
+ 6: len 1; hex 81; asc  ;;
+ 7: SQL NULL;
+
+Record lock, heap no 6 PHYSICAL RECORD: n_fields 8; compact format; info bits 0
+ 0: len 6; hex 000000000204; asc       ;;
+ 1: len 6; hex 00000000075f; asc      _;;
+ 2: len 7; hex 820000013b014c; asc     ; L;;
+ 3: len 4; hex 80000007; asc     ;;
+ 4: len 4; hex 80000007; asc     ;;
+ 5: len 4; hex 80000004; asc     ;;
+ 6: len 1; hex 81; asc  ;;
+ 7: SQL NULL;
+
+Record lock, heap no 7 PHYSICAL RECORD: n_fields 8; compact format; info bits 0
+ 0: len 6; hex 000000000205; asc       ;;
+ 1: len 6; hex 00000000075f; asc      _;;
+ 2: len 7; hex 820000013b015b; asc     ; [;;
+ 3: len 4; hex 8000000a; asc     ;;
+ 4: len 4; hex 8000000a; asc     ;;
+ 5: len 4; hex 8000000a; asc     ;;
+ 6: len 1; hex 81; asc  ;;
+ 7: SQL NULL;
+
+Record lock, heap no 8 PHYSICAL RECORD: n_fields 8; compact format; info bits 0
+ 0: len 6; hex 000000000206; asc       ;;
+ 1: len 6; hex 00000000075f; asc      _;;
+ 2: len 7; hex 820000013b016a; asc     ; j;;
+ 3: len 4; hex 8000000f; asc     ;;
+ 4: len 4; hex 8000000f; asc     ;;
+ 5: len 4; hex 8000000f; asc     ;;
+ 6: len 1; hex 81; asc  ;;
+ 7: SQL NULL;
+
+Record lock, heap no 9 PHYSICAL RECORD: n_fields 8; compact format; info bits 0
+ 0: len 6; hex 000000000207; asc       ;;
+ 1: len 6; hex 00000000075f; asc      _;;
+ 2: len 7; hex 820000013b0179; asc     ; y;;
+ 3: len 4; hex 80000014; asc     ;;
+ 4: len 4; hex 80000014; asc     ;;
+ 5: len 4; hex 80000014; asc     ;;
+ 6: len 1; hex 81; asc  ;;
+ 7: SQL NULL;
+
+Record lock, heap no 10 PHYSICAL RECORD: n_fields 8; compact format; info bits 0
+ 0: len 6; hex 000000000208; asc       ;;
+ 1: len 6; hex 00000000075f; asc      _;;
+ 2: len 7; hex 820000013b0188; asc     ;  ;;
+ 3: len 4; hex 80000019; asc     ;;
+ 4: len 4; hex 80000019; asc     ;;
+ 5: len 4; hex 8000000f; asc     ;;
+ 6: len 1; hex 80; asc  ;;
+ 7: SQL NULL;
+
+```
+
+我们从锁状态中看到，innodb 会生成一个`GEN_CLUST_INDEX`索引，然后给这个索引添加 next-key lock
+
+- 给所有记录的`GEN_CLUST_INDEX`索引添加 next-key lock
+- 然后依然会锁住所有的记录和间隙
+  - 所以最终的锁定区间是
+  - (-∞,1]
+  - ... n条记录和它们的间隙
+  - (20,+∞)
 
 ### 查询不存在的主键索引
 
+下面测试各种索引查不到的情况
+
+```SQL
+mysql> select * from user where sex = 100;
+Empty set (0.00 sec)
+
+mysql> select * from user where id = 100;
+Empty set (0.00 sec)
+
+mysql> select * from user where age = 100;
+Empty set (0.00 sec)
+```
+
+```yml
+1 lock struct(s), heap size 1136, 1 row lock(s)
+MySQL thread id 50, OS thread handle 123145565560832, query id 3429 localhost root
+TABLE LOCK table `db_test`.`user` trx id 2024 lock mode IX
+# 只是给表上添加了排他意向锁
+
+```
+
+结果就是，不管怎么样查询，只要查不到结果，那么就不会上锁。
+但是为给表添加 排他意向锁
 
 
+### 使用多个索引查询
+
+我这里只测试3种情况
+
+#### OR操作
+
+```SQL
+begin;
+select * from user where id = 1 or age = 15 for update;
+
+```
+
+这里就是取的两种情况的并集。
+
+#### 主键索引和二级AND操作
+
+```SQL
+begin;
+select * from user where id = 15 or age = 15 for update;
+
+```
+
+这个sql应该是被优化了，优化为只根据主键查询，
+
+所以最终是只对id = 15 记录的主键索引添加了普通行锁
+
+#### 二级索引和无索引字段AND操作
+
+```SQL
+begin;
+select * from user where age = 15 or sex = 1 for update;
+
+```
+
+这里因为sex字段并没有索引，所以在计算锁的时候，会忽略掉sex字段
+
+- 所以这个sql的加锁情况和`select * from user where age = 15`一致。
+- 虽然这个sql最终的记录只有一条，但是同样都会锁住。
+
+
+
+#### 结论
+写到一半的时候，我突然想到了一个问题，然后就觉得没有必要再写一下去了。
+那就是
+
+- <span style="color:red">再一次查询中，通常MySQL只会使用一个索引</span>
+- 所以我们只要判断出这个SQL中会使用哪个索引就好了，加锁的情况只会和使用的索引有关，和查询中其他没有使用索引没有任何关系
+- 所以第二个操作和第三个操作就都能解释了。
+- 关于第一个OR操作，我explain了一下
+
+```SQL
+mysql> explain select * from user where id = 1 or age = 15 ;
++----+-------------+-------+------------+-------------+-----------------+-----------------+---------+------+------+----------+-------------------------------------------+
+| id | select_type | table | partitions | type        | possible_keys   | key             | key_len | ref  | rows | filtered | Extra                                     |
++----+-------------+-------+------------+-------------+-----------------+-----------------+---------+------+------+----------+-------------------------------------------+
+|  1 | SIMPLE      | user  | NULL       | index_merge | PRIMARY,idx_age | PRIMARY,idx_age | 4,5     | NULL |    3 |   100.00 | Using union(PRIMARY,idx_age); Using where |
++----+-------------+-------+------------+-------------+-----------------+-----------------+---------+------+------+----------+-------------------------------------------+
+1 row in set, 1 warning (0.00 sec)
+
+```
+发现他使用的是`index_merge`类型，也就是说两个索引都会用到。
+所以加锁的情况也就是 2种索引加锁的情况的并集了。
+
+
+# MVCC
+接下来我们分析一下MVCC的
+
+MVCC是 多版本并发控制(Multi Version Cucurrent Control)的简称.MVCC在MySQL InnoDB中的实现主要是为了提高数据库并发性能，用更好的方式去处理读-写冲突，做到即使有读写冲突时，也能做到不加锁，非阻塞并发读
+
+这里的多版本指的就是，不同事务操作数据库所产生的不同的历史快照。MVCC可以根据查询语句，来判断是需要加锁读取当前最新数据，还是读取历史版本数据，如果是要读取历史版本数据，则会根据可见性规则判断读取哪一个版本的数据。
+
+所以这里就会涉及到MVCC的两种读取方式
+
+- 当前读
+- 快照读
+
+## 当前读
+
+当前读的意思就是要读取这个记录行中最新的数据。因为当前最新的数据可能有多个事务在操作，所以要加锁。触发当前读的操作有
+
+- select * from user in share mode; 共享锁
+- select * from user for update; 排它锁
+- update 操作
+- delete 操作
+- insert 操作
+
+
+## 快照读
+
+我们普通的select 操作，就是快照读。它会根据可见性算法选取可见的版本进行读取。它在很多情况下，避免了加锁操作，降低了开销，提高了数据库的读取并发性能。
+
+## MVCC的实现原理
+
+简单来说MVCC的实现主要依靠
+
+- 隐藏字段
+- undo log
+- Read View
+
+下面我们来分别分析一下
+
+### 隐藏字段
+
+简单来说就是在数据库的每行纪录中都保存着3个隐藏字段(当然可能还有其他的，这里我们不讨论)
+
+- A 6-byte DB_TRX_ID
+  - 最近修改(修改/插入)事务ID：记录创建这条记录/最后一次修改该记录的事务ID
+  - 其中有一个bit 为用来表示记录是否被删除了，所以删除操作对于InnoDB来就就算是更新操作
+  - InnoDB会有专门的purge线程来
+
+> In the InnoDB multi-versioning scheme, a row is not physically removed from the database immediately when you delete it with an SQL statement. InnoDB only physically removes the corresponding row and its index records when it discards the update undo log record written for the deletion. This removal operation is called a purge, and it is quite fast, usually taking the same order of time as the SQL statement that did the deletion.
+
+> 当SQL执行删除操作时，InnoDB并不会立即物理删除这条记录，只有当这条删除操作的undo log被抛弃的时候，才会真物理删除这条记录。
+
+- A 7-byte DB_ROLL_PTR
+  - 回滚指针，指定当事务将要回滚的时候，要回滚到哪个版本，指向这条记录的上一个版本
+- A 6-byte DB_ROW_ID
+  - 隐含的自增ID（隐藏主键），如果数据表没有主键，InnoDB会自动以DB_ROW_ID产生一个聚簇索引，如果有主键则不会生成
+
+
+### undo log
+
+我们上面说过，undo log中，记录了和操作相反的记录，用来回滚。
+
+- Insert undo log ：插入一条记录时，至少要把这条记录的主键值记下来，之后回滚的时候只需要把这个主键值对应的记录删掉就好了。
+- Update undo log：修改一条记录时，至少要把修改这条记录前的旧值都记录下来，这样之后回滚时再把这条记录更新为旧值就好了。
+- Delete undo log：删除一条记录时，至少要把这条记录中的内容都记下来，这样之后回滚时再把由这些内容组成的记录插入到表中就好了。
+  - 我们上面说过，当我们执行删除的时候，数据库并没有执行物理删除，只是记录了一下删除状态位
+  -
+
+从另一个角度来看，undo log也可以看成每条记录的不同版本，我们拿update来举例
+
+比如现在我们有一个person表，有name 和age 两个字段
+
+- 比如一个有个事务插入person表插入了一条新记录，记录如下，name为Jerry, age为24岁，隐式主键是1，事务ID和回滚指针，我们假设为NULL
+![](/img/undo.png)
+- 现在来了一个事务1对该记录的name做出了修改，改为Tom
+![](/img/undo1.png)
+- 又来了个事务2修改person表的同一个记录，将age修改为30岁
+![](/img/undo2.png)
+
+从上面，我们就可以看出，不同事务或者相同事务的对同一记录的修改，会导致该记录的undo log成为一条记录版本线性表，既链表，undo log的链首就是最新的旧记录，链尾就是最早的旧记录。
+
+那么undo log会一直记录下去吗？当然是不会的。后面我们了解完 read view后在来说一下这个问题。
+
+
+[15.6.6 Undo Logs](https://dev.mysql.com/doc/refman/8.0/en/innodb-undo-logs.html)
+
+### read view
+
+什么是Read View，说白了Read View就是事务进行快照读操作的时候生产的读视图(Read View)，在该事务执行的快照读的那一刻，会生成数据库系统当前的一个快照，记录并维护系统当前活跃事务的ID(当每个事务开启时，都会被分配一个ID, 这个ID是递增的，所以最新的事务，ID值越大)
+
+[15.3 InnoDB Multi-Versioning](https://dev.mysql.com/doc/refman/8.0/en/innodb-multi-versioning.html)
 
 # 本篇文章使用的表结构
 
@@ -597,6 +1625,28 @@ CREATE TABLE `user_not_index` (
 
 ```
 
+表数据
+
+```SQL
++----+--------+------+------+------+
+| id | number | age  | sex  | name |
++----+--------+------+------+------+
+|  1 |      1 |    1 |    0 | NULL |
+|  3 |      3 |    3 |    1 | NULL |
+|  4 |      4 |    4 |    1 | NULL |
+|  5 |      5 |    5 |    1 | NULL |
+|  7 |      7 |    4 |    1 | NULL |
+| 10 |     10 |   10 |    1 | NULL |
+| 15 |     15 |   15 |    1 | NULL |
+| 20 |     20 |   20 |    1 | NULL |
+| 25 |     25 |   15 |    0 | NULL |
++----+--------+------+------+------+
+```
+
 # 参考
 
 [15.7.1 InnoDB Locking](https://dev.mysql.com/doc/refman/8.0/en/innodb-locking.html)
+
+[15.3 InnoDB Multi-Versioning](https://dev.mysql.com/doc/refman/8.0/en/innodb-multi-versioning.html)
+
+[15.6.6 Undo Logs](https://dev.mysql.com/doc/refman/8.0/en/innodb-undo-logs.html)
