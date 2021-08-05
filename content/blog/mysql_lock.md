@@ -1600,7 +1600,106 @@ MVCC是 多版本并发控制(Multi Version Cucurrent Control)的简称.MVCC在M
 
 什么是Read View，说白了Read View就是事务进行快照读操作的时候生产的读视图(Read View)，在该事务执行的快照读的那一刻，会生成数据库系统当前的一个快照，记录并维护系统当前活跃事务的ID(当每个事务开启时，都会被分配一个ID, 这个ID是递增的，所以最新的事务，ID值越大)
 
-[15.3 InnoDB Multi-Versioning](https://dev.mysql.com/doc/refman/8.0/en/innodb-multi-versioning.html)
+#### 可见性算法
+ read view的核心其实就是一个可见性算法。计算可见性的关键数据有
+
+ - DB_TRX_ID 记录的最后修改事务ID
+ - trx_list，当前正在活跃的事务ID列表
+ - up_limit_id，活跃事务列表中，最小的事务ID
+ - low_limit_id, 生成readview的时刻，系统尚未分配的下一个事务ID，也就是目前已出现过的事务ID的最大值+1
+
+ 下面我们来描述一下可见性算法的规则
+
+ 首先一个前置的条件就是当前执行查询的这个事务，肯定是存在于`trx_list`中的。
+
+ - <span style="color:green">首先比较`DB_TRX_ID < up_limit_id`</span>
+  - <span style="color:green">如果是,则当前事务可以看到这条记录。`因为这表示修改这条记录的事务不在活跃列表中，并且已经提交了。`</span>
+  - 如果不是,则进入下面判断
+ - <span style="color:green">接下来判断`DB_TRX_ID >= low_limit_id`</span>
+  - <span style="color:red">如果是，则当前事务看不到这条记录的变更。`因为trx_list是在生成read view的这个时刻，活跃的事务列表。判断为true，则表示DB_TRX_ID这个事务，是在read view生成之后修改的这条记录，所以不可见`</span>
+  - 如果否，则走下面的逻辑
+ - <span style="color:green">接下来判断`DB_TRX_ID`事务，是否在当前活跃的事务列表中。</span>
+  - <span style="color:red">如果在，则对当前事务不可见，因为这表示，在生成read view的时候，`DB_TRX_ID`事务还没有提交。</span>
+  - <span style="color:green">如果不在，则对当前事务可见，以为这表示在生成 read view之前，`DB_TRX_ID`事务就已经提交了。</span>
+
+  通过上面的逻辑我们可以知道，这个可见性算法的关键，就是看，在生成 read view的那一刻,修改记录的事务有没有提交。
+
+  - 如果提交了，则可见。
+  - 如果没提交，则不可见。
+
+#### 生成 read view
+
+根据上面的逻辑，我们可以知道，每次生成read view的关键就是，记录了一份这个时刻的事务信息。
+
+- trx_list，当前正在活跃的事务ID列表
+- up_limit_id，活跃事务列表中，最小的事务ID
+- low_limit_id, 生成readview的时刻，系统尚未分配的下一个事务ID，也就是目前已出现过的事务ID的最大值+1
+
+然后在查询的时候，系统会使用read view记录的事务信息，进行可见性算法的计算，然后得到合适的记录。
+
+#### 生成read view的策略
+
+在不同的隔离级别下，对于read view的生成策略也是不一样的。
+
+比如对于下面这个操作
+
+```SQL
+begin;
+select * from user where age = 10;
+xxx
+select * from user where age = 10;
+```
+
+- <span style="color:green">在RC(Read Committed)级别下，每次select 操作都会生成一个read view</span>
+- <span style="color:green">在RR(REPEATABLE Read)级别下，只有事务中的第一次select会生成read view</span>
+
+这种区别下，造成的影响就是，在两个select 操作之间，如果有另一个事务T2插入了一条age =10 的记录，并提交了事务。
+
+- 在RC(Read Committed)级别下，会读到这条记录，也就是会发生幻读
+  - 原因就是第二次select，会重新生成read view,这时候另一个事务已经提交。判断条件DB_TRX_ID >= low_limit_id，肯定不成立
+  - 并且事务T2已经不在活跃事务列表中，所以这条记录会对当前事务可见。
+- 在RR(REPEATABLE Read)级别下，则不会读到这条记录
+  - 因为这时还沿用第一次select时的read view，这时候不管 T2是在第一次select之前还是之后生成的，这个时刻T2是没有提交的
+  - 所以这个事务T2的所有变更对当前事务都是不可见的。
+
+验证一下
+- 首先把两个session的隔离级别都设置为RC
+
+```SQL
+mysql> set session transaction isolation level read committed;
+Query OK, 0 rows affected (0.01 sec)
+
+mysql> select @@session.transaction_isolation;
++---------------------------------+
+| @@session.transaction_isolation |
++---------------------------------+
+| READ-COMMITTED                  |
++---------------------------------+
+1 row in set (0.00 sec)
+
+```
+
+![](/img/mvcc.png)
+
+我们看按照图片中的序号执行，在另一个事务提交前，无法读取到，但是提交之后，就能读取到了
+
+- 接着测试一下RR级别，首先同样先设置隔离级别为RR
+
+```SQL
+mysql> select @@session.transaction_isolation;
++---------------------------------+
+| @@session.transaction_isolation |
++---------------------------------+
+| REPEATABLE-READ                 |
++---------------------------------+
+1 row in set (0.00 sec)
+
+```
+
+![](/img/mvcc2.png)
+
+我们看到，在RR级别下，另一个事务提交后，仍然没有读到插入的数据。
+
 
 # 本篇文章使用的表结构
 
@@ -1650,3 +1749,5 @@ CREATE TABLE `user_not_index` (
 [15.3 InnoDB Multi-Versioning](https://dev.mysql.com/doc/refman/8.0/en/innodb-multi-versioning.html)
 
 [15.6.6 Undo Logs](https://dev.mysql.com/doc/refman/8.0/en/innodb-undo-logs.html)
+
+[自增锁模式](https://www.cnblogs.com/gaogao67/p/11123772.html)
