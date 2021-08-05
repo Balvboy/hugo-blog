@@ -1701,6 +1701,12 @@ mysql> select @@session.transaction_isolation;
 我们看到，在RR级别下，另一个事务提交后，仍然没有读到插入的数据。
 
 
+### undo log 什么时候删除
+
+- insert undo log：事务在插入新记录产生的undo log，当事务提交之后可以直接丢弃
+- update undo log：事务在进行 update 或者 delete 的时候产生的 undo log，在快照读的时候还是需要的，所以不能直接删除，只有当系统没有比这个log更早的read-view了的时候才能删除。ps：所以长事务会产生很多老的视图导致undo log无法删除 大量占用存储空间。
+
+
 # 本篇文章使用的表结构
 
 ```SQL
@@ -1751,3 +1757,5 @@ CREATE TABLE `user_not_index` (
 [15.6.6 Undo Logs](https://dev.mysql.com/doc/refman/8.0/en/innodb-undo-logs.html)
 
 [自增锁模式](https://www.cnblogs.com/gaogao67/p/11123772.html)
+
+[你真的懂MVCC吗？来手动实践一下](https://juejin.cn/post/6844903969815265288)
