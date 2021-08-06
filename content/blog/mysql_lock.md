@@ -1703,7 +1703,9 @@ mysql> select @@session.transaction_isolation;
 
 ### undo log 什么时候删除
 
-- insert undo log：事务在插入新记录产生的undo log，当事务提交之后可以直接丢弃
+undo log不会一直保存，当undo log能够确保没有事务会用到的时候，会设置delete bit，然后等待purge线程回收。
+
+- insert undo log：事务在插入新记录产生的undo log，当事务提交之后可以直接丢弃，因为这是新插入的数据，肯定没有事务需要查询它；
 - update undo log：事务在进行 update 或者 delete 的时候产生的 undo log，在快照读的时候还是需要的，所以不能直接删除，只有当系统没有比这个log更早的read-view了的时候才能删除。ps：所以长事务会产生很多老的视图导致undo log无法删除 大量占用存储空间。
 
 
@@ -1759,3 +1761,5 @@ CREATE TABLE `user_not_index` (
 [自增锁模式](https://www.cnblogs.com/gaogao67/p/11123772.html)
 
 [你真的懂MVCC吗？来手动实践一下](https://juejin.cn/post/6844903969815265288)
+
+[MySQL原子性与持久性的保证](https://blog.csdn.net/anying5823/article/details/104675987)
