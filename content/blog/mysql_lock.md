@@ -2,7 +2,6 @@
 title: "MySQL的事务、日志、锁和MVCC"
 date: 2021-07-28T10:53:40+08:00
 author:     "zhouyang"
-draft: true
 tags:
     - mysql
 categories: [ MySQL ]   
