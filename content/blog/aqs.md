@@ -8,7 +8,7 @@ date:     2021-06-24
 published: true
 tags:
     - AQS
-    - ReentranLock
+    - ReentrantLock
 categories: [Java同步机制]
 mermaid: true
 ---
