@@ -1708,6 +1708,24 @@ undo log不会一直保存，当undo log能够确保没有事务会用到的时�
 - update undo log：事务在进行 update 或者 delete 的时候产生的 undo log，在快照读的时候还是需要的，所以不能直接删除，只有当系统没有比这个log更早的read-view了的时候才能删除。ps：所以长事务会产生很多老的视图导致undo log无法删除 大量占用存储空间。
 
 
+## RR级别下如何解决幻读
+
+通过[生成read-view的策略](/blog/mysql_lock/#生成read-view的策略)这一部分我们了解，在RR级别下，通过生成Read-View的策略解决了`快照读的幻读问题`。
+
+那么当前读会不会有幻读问题呢？
+
+答案是肯定的。继续沿用上面的RR隔离级别下的SQL，我们在左边的事务中执行一个当前读的操作
+
+```sql
+mysql> update user set sex = 0 where age = 10;
+Query OK, 3 rows affected(0.00 sec)
+
+```
+
+我们发现，虽然上面查询只查出来了2条，但是我们执行更新的时候却更新了3条，这在某种意义上来说也算是一种幻读 `一种针对当前读的幻读`
+
+
+
 # 本篇文章使用的表结构
 
 ```SQL
