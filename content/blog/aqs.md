@@ -366,6 +366,7 @@ static final class FairSync extends Sync {
 那么公平锁和非公平锁的区别就体现在，这两个类，对着两个方法的实现上。
 
 我们先看`tryAcquire`方法的区别。
+
 - `NonfairSync`是直接调用的父类的`nonfairTryAcquire`方法，它呢不会管当前有没有其他线程再等待，只要当前没有线程持有，就尝试获取一次
 - `FairSync`是会先判断是否有其他线程再等待，只有没有线程等待或者它本身就是最前面的节点的时候，才会尝试获取。
 
@@ -523,6 +524,7 @@ public class FairVsNonFairLock {
 ![](/img/acquire.png)
 
 调用`ReentranLock`的`lock`方法，调用的是`FairSync`或者`NonfairSync`的`lock()`方法。
+
 - NonfairSync会先尝试CAS获取一次，如果获取失败则调用AQS的`acquire()`方法
 - FairSync则是直接调用AQS的`acquire`方法。
 - `acquire`方法中，首先会调用`FairSync`或者`NonfairSync`的`tryAcquire()`方法
@@ -555,6 +557,7 @@ public final void acquire(int arg) {
 }
 
 ```
+
 - 注释中提到，这个方法是忽略中断的。也就是说线程在获取锁的过程中，无法通过调用线程的`interrupt()`方法中断获取锁的行为。
 - 会至少调用一次`tryAcquire()`方法，如果获取成功则返回。
 - 所以说，如果一个线程是第一获取锁的线程，那么它会直接获取成功，并不会创建节点，只有第二个线程来获取，才会创建节点，然后加入等待队列。
@@ -779,6 +782,7 @@ private static boolean shouldParkAfterFailedAcquire(Node pred, Node node) {
 `只有SIGNAL状态表示的是对后置节点的操作，其他状态都是表示的本身节点的状态`
 
  上面提到，一个节点的`waitStatus`设置为`SIGNAL`，表示的是这个节点的后置节点正在或者将要被阻塞，也可以理解为这个节点的后置节点等待它前面节点唤醒(这个更符合`SIGNAL`的定义)。
+
  - 所以说，一个节点的处于`SIGNAL`状态，表示的是，当这个节点被释放的时候，需要唤醒它的后续节点。
  - 那么既然这个状态会指导对后置节点的操作，所以这个状态的变更也应该有后置节点来触发。
  - 所以每个节点的初始状态都是0，当有后置节点加入队列的时候，会在后置节点执行`shouldParkAfterFailedAcquire`的时候，把这个节点的状态修改为`SIGNAL`
@@ -883,6 +887,7 @@ if (h != null && h.waitStatus != 0)
     unparkSuccessor(h);
 return true;
 ```
+
 - `head!=null`,因为head节点是，后续线程获取锁失败后，加入队列时创建的，所以`head!=null`就表示有后续节点。
 - `h.waitStatus != 0`一个节点的初始状态是0，在后置节点第一次判断是否应该挂起的时候，会把他的前置节点状态修改为`SIGNAL`也就是1。所以`h.waitStatus=0`就可以理解为
   - 后置节点正在执行中，还没有挂起，所以不需要唤醒
@@ -959,6 +964,7 @@ private void unparkSuccessor(Node node) {
 }
 
 ```
+
 - 首先拿到头结点的后置节点，如果为空或者状态是`CANCELLED`则从队列中寻找一个可用的节点
 - <span style="color:red"> 这里有一个关键就是从队尾开始寻找 </span>
 - 如果找到了，则使用`LockSupport.unpark(s.thread)`唤醒指定的线程。
@@ -974,6 +980,7 @@ private void unparkSuccessor(Node node) {
 Condition为Lock提供了条件等待的功能，即`一个线程达到某个条件时暂停执行，直到另一个线程通知它再次执行`。因为这个条件需要在不同的线程中被访问，所以对Conditon对象的操作必须受到`Lock`的保护，也就是必要获得`Lock`，才能执行。
 
 ### Condition原理
+
 - 当一个线程A获取了lock锁，调用了`condition.await()`,会释放锁，并构建一个Node对象(和AQS中的一样)节点状态为`CONDITION,-2`，加入到Condition的条件队列中。
 - 然后让当前线程挂起，等待唤醒，或者挂起一段时间自己唤醒
 - 当另一个线程B获取了lock锁，调用了`condition.signal()`,会找到`condition`条件队列中的第一个节点，把它加入到AQS的同步队列中，然后唤醒Node中的线程。
@@ -1215,6 +1222,7 @@ private void doSignalAll(Node first) {
 
 ### 为什么需要调用selfInterrupt进行自我中断
 上面我们说到，线程在等待锁的状态下，被调用了中断。
+
 - 在执行parkAndCheckInterrupt()方法后，会被清除掉线程的中断状态。
 - 但是会在`acquireQueued`方法中记录下来被调用了中断的这个事情`interrupted = true;`
 - 线程在获取到锁之后，会返回中断状态
@@ -1254,6 +1262,7 @@ private void doSignalAll(Node first) {
 
 ![](/img/cancelacquire.png)
 我们看到它被调用的地方都很统一，就是在各种各样的获取锁方法中被调用。代码的逻辑也都很一致。
+
 - 在方法中定义一个局部变量 fail = true；
 - 在获取锁成功的时候设置 fail = false;
 - 在finally代码块中判断fail，如果为true，则执行`cancelAcquire`方法。
