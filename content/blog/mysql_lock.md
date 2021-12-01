@@ -7,7 +7,9 @@ tags:
 categories: [ MySQL ]   
 
 ---
+
 # MySQL的存储引擎
+
 MySQL有多种可选的存储引擎，常见的有
 
 - InnoDB
@@ -291,16 +293,125 @@ show engine innodb status\G;
 
 ## 行锁
 
-首先关于行锁要说的就是，行锁和数据库使用的隔离界别有很大的关系。这里我们只说比较常用的`读已提交 RC`和`可重复读 RR`这两个级别。
+### 行锁的种类
 
-- 在`RC`隔离级别下行锁只有普通记录锁这一种；
-- 在`RR`隔离界别下行锁种类比较多
+MySQL中为了实现不同的功能定义了多种行锁
+
+- 普通行锁 ：lock_mode X/S locks rec but not gap
+- 间隙锁   ：lock_mode X/S locks gap before rec
+- 邻间锁   ：lock_mode X/S 
+- 插入意向锁 : Insert Intention Locks
+- 隐式锁
+
+#### 普通行锁
+
+普通行锁仅仅把一条记录锁锁住。
+
+普通行锁也可以分为
+
+- S型 共享锁
+- X型 独占锁
+
+当一个事务获取了一条记录的S型普通行锁后，其他事务也可以继续获取该记录的S型普通行锁，但不可以继续获取X型普通行锁；
+当一个事务获取了一条记录的X型普通行锁后，其他事务既不可以继续获取该记录的S型普通行锁，也不可以继续获取X型普通行锁；
+
+#### 间隙锁 Gap Lock
+
+
+>Gap locks in InnoDB are “purely inhibitive”, which means that their only purpose is to prevent other transactions from inserting to the gap
+>
+> InnoDB 中的间隙锁是“纯粹的抑制性”，这意味着它们的唯一目的是防止其他事务插入间隙
+
+MySQL中给Gap Lock的命名是：`locks gap before rec`，也就是锁住记录之前的间隙。
+
+<span style="color: red;">需要注意的是，这个的之前，是指的指定索引顺序的之前之后，而不是表中记录的顺序。如果我们使用的主键索引，那么它的顺序会和表中数据一致，如果使用的是二级索引，那就不一定了。</span>
+
+间隙锁锁的不是记录，而是记录和记录之间的间隙。举例来说明一下：
+
+现在user表有2条记录
+
+|id|  number  |age| sex|
+|---|---|---|---|
+|1  | 1 |18 |1  |
+|5  | 5 |17 |0  |
+
+我们现在给id=5的记录添加间隙锁，那么就会锁住id=5的记录和他前一条记录之前的间隙，也就是(1-5)这个区间(暂时不考虑开闭区间的问题)。
+如果有事务向id(1,5)在这个区间内插入记录，那么将会阻塞。
+
+那么问题来了，如果我想锁住第一条记录之前的间隙，和最后一条记录之后的间隙那改怎么办呢？
+
+这时候就需要用到数据页中的两条伪记录
+
+- Infimum记录，表示该页面中最小的记录。 给 id =1 加间隙锁，会锁住(-∞,1)
+- Supremum记录，表示该页面中最大的记录。给 Supremum 加间隙锁，会锁住(5,+∞)
+
+
+#### 邻间锁 Next-Key Locks
+
+> A next-key lock is a combination of a record lock on the index record and a gap lock on the gap before the index record.
+>
+> next-key 锁是索引记录上的记录锁和索引记录之前的间隙上的间隙锁的组合。
+
+所以邻间锁既会锁住记录，也会锁住这条记录和前面一条记录之间的间隙。(`所以叫邻间锁，相邻的间隙的意思`)。
+
+>By default, InnoDB operates in REPEATABLE READ transaction isolation level. In this case, InnoDB uses next-key locks for searches and index scans, which prevents phantom rows (see Section 15.7.4, “Phantom Rows”).
+>
+> 默认情况下，InnoDB 在 REPEATABLE READ 事务隔离级别下运行。在这种情况下，InnoDB 使用 next-key 锁进行搜索和索引扫描，从而防止幻读。
+
+邻间锁就可以理解为普通行锁和间隙锁的结合，既能锁住某一行，也能锁住记录之前的间隙。
+
+
+#### 插入意向锁
+
+一个事务在插入一条记录时需要判断一下插入位置是不是被别的事务加了间隙锁，如果有的话，插入操作需要等待，直到拥有gap锁的那个事务提交。
+但是设计InnoDB的大叔规定事务在等待的时候也需要在内存中生成一个锁结构，表明有事务想在某个间隙中插入新记录，但是现在在等待。
+
+所以插入意向锁的意思就是，有一个事务有意向往一个区间中插入记录，但是这个区间被其他事务锁定了，所以只能阻塞。
+
+这个我们在后面单独分析Insert语句的加锁情况时会单独分析
+
+### 隔离级别对行锁的影响
+
+行锁和数据库使用的隔离界别有很大的关系
+
+- 在`读已提交`下
+  - 只有普通记录锁这一种
+- 在`可重复读`下有
   - 普通记录锁
   - 间隙锁
   - 邻间锁
   - 插入意向锁
 
-下面我们通过例子来说明一下，我们分别在默认隔离级别RR和RC下都执行下面的SQL,然后使用`show engine innodb status\G`查看锁状态。
+RC隔离级别下，只能锁住某一行记录，但是不是锁住记录之间的间隙，所以不能防止幻读。
+
+#### 修改隔离级别
+
+MySQL 5.x版本
+
+```SQL
+-- 查看全局、会话隔离级别
+select @@global.tx_isolation,@@tx_isolation;
+-- 设置会话隔离级别
+set session transaction isolation level read committed;
+-- 设置全局隔离级别
+set global transaction isolation level read committed;
+
+```
+
+MySQL-8.0.3版本以后
+
+`在MySQL 8.0.3 中，tx_isolation 变量被 transaction_isolation 变量替换了。`
+
+```SQL
+/**查看当前会话级别**/
+SELECT @@global.transaction_isolation,@@session.transaction_isolation;
+/**修改当前会话隔离级别**/
+set session transaction isolation level repeatable read;
+```
+
+#### 不同隔离级别下的加锁情况
+
+下面我们通过例子来说明一下，我们分别在隔离级别RR和RC下都执行下面的SQL,然后使用`show engine innodb status\G`查看锁状态。
 
 ```SQL
 begin;
@@ -308,42 +419,37 @@ select * from user where age = 10 for update;
 
 ```
 
-1. RR
+##### 可重复读
+
 ![](/img/rr-lock.png)
-我们看到这里出现了3种锁类型
+我们看到这里出现了3种行锁类型
 
-2. RC
-`提示：在MySQL 8.0.3 中，tx_isolation 变量被 transaction_isolation 变量替换了。`
-
-```SQL
-/**修改当前会话隔离级别**/
-set session transaction isolation level read committed;
-/**查看当前会话级别**/
-SELECT @@session.transaction_isolation;
-begin；
-select * from user where age = 10 for update;
-```
-
-![](/img/rc-lock.png)
+##### 读已提交
 
 ![](/img/rc-lock2.png)
 
-我们看到只有一种锁类型
+我们看到只有普通行锁一种锁类型
 
-我们在上面通过`show engine innodb status\g`查看锁状态，发现了几种锁类型，他们分别是这样对应的
 
-- lock_mode X 表示邻间锁
-- lock_mode X locks rec but not gap 表示普通行锁
-- lock_model X locks gap 表示间隙锁
+## 加锁情况分析
 
-下面我们分别来分析一下这几种锁，在说下面几种锁的时候我们需要了解一些前提
+因为`读已提交`级别下的几所情况比较简单，只会给查询出的记录加普通行锁。
+所以我们下面的分析中，都会在`可重复读`级别下进行。
 
-- 下面的分析都会在默认隔离级别下进行。
-- 在InnoDB中，所有的行锁都是添加在索引上的（这一条先记住，后面会慢慢涉及到）
+### 开启MySQL锁监控
 
+在分析之前，我们先解决一个问题。
+有的同学可能也知道`show engine innodb status`这个命令，但是执行之后会发现，并没有输出这么多的锁信息。
+这是因为`innodb_status_output_locks` 这个参数导致的。默认情况下是关闭的。我们需要打开它就可以看到详细的锁信息了。
+
+```
+SET GLOBAL innodb_status_output_locks=ON;
+
+```
 
 ### show engine innodb status分析
-下面在了解行锁之前，我们先学会怎么分析 MySQL的锁日志，下面我们通过一段日志来分析一下。
+
+下面我们通过一个针对二级索引加锁的SQL来说明一下
 
 ```SQL
 /** 查询一个二级索引  **/
@@ -361,9 +467,8 @@ mysql> select * from user where age = 15 for update;
 
 mysql> show engine innodb status\G
 ```
-![](/img/lockstatus2.png)
 
-下面我们来逐行分析一下
+下面我们来逐行分析一下 TRANSACTION 部分
 
 ```yml
 TRANSACTIONS
@@ -460,70 +565,14 @@ Record lock, heap no 10 PHYSICAL RECORD: n_fields 2; compact format; info bits 0
 所以根据上面的情况分析，我们得出最终锁定的区间是
 
 - idx_age 索引
-  - (10,15]
-  - (15,20)
+  - (10,15]  邻间锁
+  - (15,20)  间隙锁
 - 主键索引
-  - [15]
-  - [25]
+  - [15]     普通行锁
+  - [25]     普通行锁
 
-
-
-### 普通行锁
-
-这种是最简单的行锁了,意思就是仅仅把这一条记录对应的索引锁上。
-
-```SQL
-begin;
-select * from user where id = 1 for update;
-```
-- 当我们使用主键索引`等值`查询时,会给这条记录的主键索引加上行锁
-
-![](/img/record2.png)
-
-```SQL
-begin;
-select * from user where number = 1 for update;
-```
-- 当使用唯一索引`等值`查询是，会给这条记录的主键索引和唯一索引分别添加行锁
-![](/img/record3.png)
-
-### 间隙锁 gap lock
-
->Gap locks in InnoDB are “purely inhibitive”, which means that their only purpose is to prevent other transactions from inserting to the gap
->
-> InnoDB 中的间隙锁是“纯粹的抑制性”，这意味着它们的唯一目的是防止其他事务插入间隙
-
-间隙锁锁的不是记录，而是记录和记录之间的间隙。举例来说明一下：
-
-现在user表有2条记录
-
-|id|	number	|age|	sex|
-|---|---|---|---|
-|1 |	1	|18	|1|
-|5 | 5|	17|	0|
-
-如果是给2条记录添加间隙锁，那么就会锁住2条记录id之间的间隙，也就是
-(1-5)这个区间(暂时不考虑开闭区间的问题)。
-如果有事务向表内插入id在这个区间内的记录，那么将会阻塞。
-
-### 邻间锁 next-key lock
-
-> A next-key lock is a combination of a record lock on the index record and a gap lock on the gap before the index record.
->
-> next-key 锁是索引记录上的记录锁和索引记录之前的间隙上的间隙锁的组合。
-
-所以邻间锁既会锁住记录，也会锁住这条记录和前后两条记录之间的间隙。(`所以叫邻间锁，相邻的间隙的意思`)。
-
->By default, InnoDB operates in REPEATABLE READ transaction isolation level. In this case, InnoDB uses next-key locks for searches and index scans, which prevents phantom rows (see Section 15.7.4, “Phantom Rows”).
->
-> 默认情况下，InnoDB 在 REPEATABLE READ 事务隔离级别下运行。在这种情况下，InnoDB 使用 next-key 锁进行搜索和索引扫描，从而防止幻读。
-
-我们这里先简单的了解一下概念，下面我们会根据不同的情况来分析。
-
-接下来我们会分析一下，使用不同索引来加锁时的情况。
 
 ### 查询主键索引
-首先我们来看根据主键索引查询的情况
 
 #### 主键等值查询
 ```SQL
@@ -1028,7 +1077,7 @@ Record lock, heap no 7 PHYSICAL RECORD: n_fields 2; compact format; info bits 0
 - 对查询出来记录的主键，添加普通记录锁
 
 ![](/img/uk1.png)
-我们先看唯一主键的操作，发现右边的左右被阻塞了。
+我们先看唯一索引的操作，发现右边的左右被阻塞了。
 
 ![](/img/uk2.png)
 我们再看针对主键的操作，发现右边的操作没有被阻塞。
@@ -1424,29 +1473,28 @@ Record lock, heap no 10 PHYSICAL RECORD: n_fields 8; compact format; info bits 0
 
 ### 查询不存在的主键索引
 
-下面测试各种索引查不到的情况
 
 ```SQL
-mysql> select * from user where sex = 100;
+mysql> select * from user where id = 200;
 Empty set (0.00 sec)
 
-mysql> select * from user where id = 100;
-Empty set (0.00 sec)
-
-mysql> select * from user where age = 100;
-Empty set (0.00 sec)
 ```
 
 ```yml
-1 lock struct(s), heap size 1136, 1 row lock(s)
-MySQL thread id 50, OS thread handle 123145565560832, query id 3429 localhost root
-TABLE LOCK table `db_test`.`user` trx id 2024 lock mode IX
-# 只是给表上添加了排他意向锁
+2 lock struct(s), heap size 1136, 1 row lock(s)
+MySQL thread id 10, OS thread handle 123145362374656, query id 895 localhost 127.0.0.1 root
+TABLE LOCK table `db_test`.`user` trx id 6173 lock mode IX
+RECORD LOCKS space id 11 page no 4 n bits 80 index PRIMARY of table `db_test`.`user` trx id 6173 lock_mode X
+Record lock, heap no 1 PHYSICAL RECORD: n_fields 1; compact format; info bits 0
+ 0: len 8; hex 73757072656d756d; asc supremum;;
 
 ```
 
-结果就是，不管怎么样查询，只要查不到结果，那么就不会上锁。
-但是为给表添加 排他意向锁
+我们发现一共添加了2个锁结构
+
+- 表上添加的独占意向锁
+- 给最大值记录添加了邻间锁
+  - 锁定了表中最大值210和数据页中的最大索引记录(210,+∞)这个区间
 
 
 ### 使用多个索引查询
@@ -1513,9 +1561,165 @@ mysql> explain select * from user where id = 1 or age = 15 ;
 所以加锁的情况也就是 2种索引加锁的情况的并集了。
 
 
+## 加锁情况分析总结
+
+分析了上面几条SQL的加锁情况之后，我感觉有一种通用的规则。
+
+那就是在可重复读级别下，所使用的的加锁方式，都是围绕这个可重复读来添加的，也就是同一个事务中第一次读和第二次读的结果必须是一致的。
+
+我们还是举例说明一下
+
+```SQL
+mysql> select * from user where id <= 10;
++----+--------+------+------+------+
+| id | number | age  | sex  | name |
++----+--------+------+------+------+
+|  3 |      3 |    4 |    1 | test |
+|  4 |      4 |   34 |    1 | name |
+|  5 |      5 |   51 |    1 | name |
+|  7 |      7 |    4 |    1 | test |
+| 10 |     10 |   10 |    1 | name |
++----+--------+------+------+------+
+5 rows in set (0.00 sec)
+
+```
+
+为了保证这个查询结果不会发生变化，我们需要在什么范围内加锁呢？
+
+ 所有id小于等于10的记录和间隙是不是都需要锁住？
+
+- 首先肯定现在表上添加独占意向锁
+- 然后这些查询出来的记录都要加普通记录锁,还有记录之间的间隙也要加间隙锁
+  - 所以就是直接加next-key邻间锁
+- 所以现在锁住的区间就有(-∞,3](3,4](4,5](5,7](7,10]
+
+
+### update、delete 和 select for update 的区别
+
+实际测试了一下，这几种当前读的加锁方式，有稍微的不同。
+
+delete 和 update 完全相同
+
+delete 和 update 在范围查询情况下，往往比 select for update 范围要大一点，就是在临界行的判断上。
+
+参考一下：
+
+[ 常见 SQL 语句的加锁分析](https://www.aneasystone.com/archives/2017/12/solving-dead-locks-three.html)
+
+
+### MySQL 范围加锁的一个Bug
+
+在 MySQL 8.0.18之前都有一个Bug。也就是针对上面的那个SQL。
+
+MySQL同样会给 10后面的一条记录添加邻间锁
+
+```SQL
+
+mysql> select version();
++------------+
+| version()  |
++------------+
+| 5.7.34-log |
++------------+
+1 row in set (0.00 sec)
+
+mysql> select * from user where id <=10 for update;
++----+--------+------+------+------+
+| id | number | age  | sex  | name |
++----+--------+------+------+------+
+|  3 |      3 |    4 |    1 | NULL |
+|  4 |      4 |   34 |    1 | NULL |
+|  5 |      5 |   51 |    1 | NULL |
+|  7 |      7 |    4 |    1 | NULL |
+| 10 |     10 |   10 |    1 | NULL |
++----+--------+------+------+------+
+5 rows in set (0.00 sec)
+
+mysql> show engine innodb status \G;
+
+```
+
+```
+TRANSACTIONS
+------------
+Trx id counter 2323
+Purge done for trx's n:o < 2320 undo n:o < 0 state: running but idle
+History list length 0
+LIST OF TRANSACTIONS FOR EACH SESSION:
+---TRANSACTION 2322, ACTIVE 10 sec
+2 lock struct(s), heap size 1136, 6 row lock(s)
+MySQL thread id 19, OS thread handle 22553189902080, query id 50 localhost 127.0.0.1 root starting
+show engine innodb status
+TABLE LOCK table `db_test`.`user` trx id 2322 lock mode IX
+RECORD LOCKS space id 25 page no 3 n bits 80 index PRIMARY of table `db_test`.`user` trx id 2322 lock_mode X
+Record lock, heap no 2 PHYSICAL RECORD: n_fields 7; compact format; info bits 0
+ 0: len 4; hex 80000003; asc     ;;
+ 1: len 6; hex 000000000907; asc       ;;
+ 2: len 7; hex a70000011b0110; asc        ;;
+ 3: len 4; hex 80000003; asc     ;;
+ 4: len 4; hex 80000004; asc     ;;
+ 5: len 1; hex 81; asc  ;;
+ 6: SQL NULL;
+
+Record lock, heap no 3 PHYSICAL RECORD: n_fields 7; compact format; info bits 0
+ 0: len 4; hex 80000004; asc     ;;
+ 1: len 6; hex 000000000907; asc       ;;
+ 2: len 7; hex a70000011b011c; asc        ;;
+ 3: len 4; hex 80000004; asc     ;;
+ 4: len 4; hex 80000022; asc    ";;
+ 5: len 1; hex 81; asc  ;;
+ 6: SQL NULL;
+
+Record lock, heap no 4 PHYSICAL RECORD: n_fields 7; compact format; info bits 0
+ 0: len 4; hex 80000005; asc     ;;
+ 1: len 6; hex 000000000907; asc       ;;
+ 2: len 7; hex a70000011b0128; asc       (;;
+ 3: len 4; hex 80000005; asc     ;;
+ 4: len 4; hex 80000033; asc    3;;
+ 5: len 1; hex 81; asc  ;;
+ 6: SQL NULL;
+
+Record lock, heap no 5 PHYSICAL RECORD: n_fields 7; compact format; info bits 0
+ 0: len 4; hex 80000007; asc     ;;
+ 1: len 6; hex 000000000907; asc       ;;
+ 2: len 7; hex a70000011b0134; asc       4;;
+ 3: len 4; hex 80000007; asc     ;;
+ 4: len 4; hex 80000004; asc     ;;
+ 5: len 1; hex 81; asc  ;;
+ 6: SQL NULL;
+
+Record lock, heap no 6 PHYSICAL RECORD: n_fields 7; compact format; info bits 0
+ 0: len 4; hex 8000000a; asc     ;;
+ 1: len 6; hex 000000000907; asc       ;;
+ 2: len 7; hex a70000011b0140; asc       @;;
+ 3: len 4; hex 8000000a; asc     ;;
+ 4: len 4; hex 8000000a; asc     ;;
+ 5: len 1; hex 81; asc  ;;
+ 6: SQL NULL;
+
+Record lock, heap no 7 PHYSICAL RECORD: n_fields 7; compact format; info bits 0
+ 0: len 4; hex 8000000f; asc     ;;
+ 1: len 6; hex 000000000907; asc       ;;
+ 2: len 7; hex a70000011b014c; asc       L;;
+ 3: len 4; hex 8000000f; asc     ;;
+ 4: len 4; hex 8000000f; asc     ;;
+ 5: len 1; hex 81; asc  ;;
+ 6: SQL NULL;
+
+```
+
+我们看到最下一条 id=15的记录也添加了 邻间锁。
+
+在8.0.18以前的版本中，对加锁规则：在RR可重复读级别下，唯一索引上的范围查询，需要访问到不满足条件的第一个值为止
+
+MySQL在 8.0.18版本修复了这个Bug
+
+(MySQL加锁Bug修复)[https://mp.weixin.qq.com/s/xDKKuIvVgFNiKp5kt2NIgA]
+
+
 # MVCC
 
-首先MVCC只会在RC 和RR隔离界别下生效。
+首先MVCC只会在RC 和RR隔离级别下生效。
 
 MVCC是 多版本并发控制(Multi Version Cucurrent Control)的简称.MVCC在MySQL InnoDB中的实现主要是为了提高数据库并发性能，用更好的方式去处理读-写冲突，做到即使有读写冲突时，也能做到不加锁，非阻塞并发读
 
@@ -1688,6 +1892,7 @@ mysql> select @@session.transaction_isolation;
 - 接着测试一下RR级别，首先同样先设置隔离级别为RR
 
 ```SQL
+set session transaction isolation level repeatable read;
 mysql> select @@session.transaction_isolation;
 +---------------------------------+
 | @@session.transaction_isolation |
@@ -1730,6 +1935,24 @@ Query OK, 3 rows affected(0.00 sec)
 
 
 # 本篇文章使用的表结构
+
+
+## 数据库版本
+
+因为8.0.18版本之前的MySQL加锁有Bug，所以如果你使用的是5.x版本，和我查看的加锁结构可能会有锁区别
+
+```
+mysql> select version();
++-----------+
+| version() |
++-----------+
+| 8.0.25    |
++-----------+
+1 row in set (0.00 sec)
+
+```
+
+## 表结构
 
 ```SQL
 CREATE TABLE `user` (
@@ -1783,3 +2006,13 @@ CREATE TABLE `user_not_index` (
 [你真的懂MVCC吗？来手动实践一下](https://juejin.cn/post/6844903969815265288)
 
 [MySQL原子性与持久性的保证](https://blog.csdn.net/anying5823/article/details/104675987)
+
+[解决死锁之路（终结篇）- 再见死锁](https://cloud.tencent.com/developer/article/1494926)
+
+[读 MySQL 源码再看 INSERT 加锁流程](https://www.aneasystone.com/archives/2018/06/insert-locks-via-mysql-source-code.html)
+
+[MySQL锁系列（一）之锁的种类和概念](https://keithlan.github.io/2017/06/05/innodb_locks_1/)
+
+[InnoDB这个将近20年的"bug"修复了-范围查询加锁Bug](https://mp.weixin.qq.com/s/xDKKuIvVgFNiKp5kt2NIgA)
+
+[15.7.3 Locks Set by Different SQL Statements in InnoDB](https://dev.mysql.com/doc/refman/8.0/en/innodb-locks-set.html)
