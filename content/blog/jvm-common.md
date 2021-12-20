@@ -34,8 +34,55 @@ draft: true
 jstat -gcutil 35001 1000
 
 
+# jmap 命令
+
+## 查看堆中实例统计
+
+```
+jmap -histo
+```
+
+# jinfo 命令
+
+## 查看jvm参数
+
+```
+jinfo -flags pid 
+
+```
+
+## 查看指定参数
+
+```
+jinfo -flag UseConcMarkSweepGC 7628
+-XX:+UseConcMarkSweepGC
+
+```
+
+
+# JVM参数
+
+## 垃圾回收相关
+
+```
+-XX:+PrintGC 输出GC日志
+
+-XX:+PrintGCDetails 输出GC的详细日志
+
+-XX:+PrintGCTimeStamps 输出GC的时间戳（以基准时间的形式）
+
+-XX:+PrintGCDateStamps 输出GC的时间戳（以日期的形式，如 2013-05-04T21:53:59.234+0800）
+
+-XX:+PrintHeapAtGC 在进行GC的前后打印出堆的信息
+
+-Xloggc:../logs/gc.log 日志文件的输出路径
+
+```
 
 # 参考
 
 [jstat命令查看jvm的GC情况](https://www.cnblogs.com/yjd_hycf_space/p/7755633.html)
 
+[JVM GC 之「AdaptiveSizePolicy」实战](https://segmentfault.com/a/1190000016427465)
+
+[几种OOM异常分析](https://blog.csdn.net/sunquan291/article/details/79109197)

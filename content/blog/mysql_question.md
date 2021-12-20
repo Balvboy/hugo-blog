@@ -12,29 +12,30 @@ draft: true
 首先常见的索引结构有
 
 - Hash
-- B树(Balance Tree)
+- B树[Balance Tree]
 - B+树
 
-首先Hash结构，在针对指定索引的查询时，效率最高，为O(1)。
+首先Hash结构，在针对指定索引的查询时，效率最高，为O[1]。
 但是MySQL作为一种关系型数据库，经常会有范围查询的需求，这种范围查询对于Hash结构是致命的，如果使用Hash结构进行范围查询，只能通过全表扫描，因为经过Hash之后，即使相邻的数据，也可能分布到相隔很远的数据页中。
+
 所以Hash结构只能淘汰。
 
 B树和B+树有相同点，也有区别
 
 B树
-!()[/img/btree.png]
+![](/img/btree.png)
 
 B+树
-!()[/img/b+tree.webp]
+![](/img/b+tree.png)
 
 - 相同点是，他们都是多叉平衡树
 - 不同点是
 	- B树可以在非叶子节点存储数据
 	- B+树，只能在叶子节点存储数据
-	- B+数，同一层的节点包括叶子节点之间都是有序的，并且通过链表相连(包括数据页和数据行之间都是相连的)
+	- B+数，同一层的节点包括叶子节点之间都是有序的，并且通过链表相连[包括数据页和数据行之间都是相连的]
 
-在查询效率方面，B数因为在非叶子节点也存储数据，所以和数据的位置相关，最好为O(1),最差为O(logN)
-B+树因为所有的数据都在叶子节点中存储，所以查询效率和位置无关(忽略覆盖索引)，都是O(logN)
+在查询效率方面，B数因为在非叶子节点也存储数据，所以和数据的位置相关，最好为O[1],最差为O[logN]
+B+树因为所有的数据都在叶子节点中存储，所以查询效率和位置无关[忽略覆盖索引]，都是O[logN]
 
 另外还有一点，InnoDB是已数据页为单位来存储数据的，默认情况下数据页大小为16KB。
 
@@ -42,34 +43,158 @@ B+树因为所有的数据都在叶子节点中存储，所以查询效率和位
 
 另外B+数的同层节点都是以一个链表的形式相连的，所以从一个数据页跳转到相邻的另一个数据页这个操作是十分高效的。
 
+## 总结
+
+- 因为是关系型数据库，会经常有范围查询的需求，所以排除了Hash结构
+- 因为数据是存储在磁盘上的，而磁盘和内存的操作响应时间差了好几个数量级，所以减少内存和磁盘之间的内存交互十分重要。
+- B树和B+树，都能实现范围查询，并且都是多叉结构(能够有效减少树的高度)
+- B树和B+树的主要区别就是
+	- B树每个节点都会存储数据
+	- B+树只会在叶子节点存储数据
+- 同样的大小一个数据页，B+树只存索引，B树既存索引，又存数据
+- 所以加载同样数量的数据页，B+树能够加载更多的索引，所以就能够较少更多的IO操作。
+- 另外B+树每层的节点之间都是相连的，能够更方便的进行相邻数据的查询。
+
+
 ## 参考
 
-(why use b+tree)[https://medium.com/@mena.meseha/what-is-the-difference-between-mysql-innodb-b-tree-index-and-hash-index-ed8f2ce66d69]
+[why use b+tree](https://medium.com/@mena.meseha/what-is-the-difference-between-mysql-innodb-b-tree-index-and-hash-index-ed8f2ce66d69)
 
-(为什么MySQL使用B+树)[https://draveness.me/whys-the-design-mysql-b-plus-tree/]
+[为什么MySQL使用B+树](https://draveness.me/whys-the-design-mysql-b-plus-tree/)
 
-(MySQL数据库索引为什么选择使用B+树)[https://developpaper.com/why-does-mysql-database-index-choose-to-use-b-tree/]
+[MySQL数据库索引为什么选择使用B+树](https://developpaper.com/why-does-mysql-database-index-choose-to-use-b-tree/)
 
-(B+树在磁盘存储中的应用)[https://www.cnblogs.com/nullzx/p/8978177.html]
+[B+树在磁盘存储中的应用](https://www.cnblogs.com/nullzx/p/8978177.html)
 
-(B+树的几点总结)[https://blog.csdn.net/love_u_u12138/article/details/50285655?spm=1001.2014.3001.5501]
+[B+树的几点总结](https://blog.csdn.net/love_u_u12138/article/details/50285655?spm=1001.2014.3001.5501)
 
 
 # MySQL Server 和存储引擎之间的执行过程
 
-(MySQL中包含IN子句的语句是怎样执行的)[https://juejin.cn/post/6844904048798203911]
+简单说 MySQL基本模块有
 
+- 数据库连接池
+
+负责管理数据库连接	
+
+- SQL解析器
+
+解析SQL
+
+- SQL优化器
+
+优化SQL，生成执行计划，比如要使用哪个索引,调整查询条件的顺序等等
+
+- 执行器
+
+按照执行计划，调用存储引擎接口，查询数据
+
+- 存储引擎
+
+和操作系统交互，从磁盘或内存中查询数据
+
+
+![](/img/sqlflow.png)
+
+
+## Server层和存储引擎的交互
+
+我们把存储引擎之前的所有模称为成为Server层
+
+我们以下面这个SQL为例来分析一下
+
+```SQL
+
+SELECT * FROM t WHERE key1 > 70 AND common_field != 'a';
+
+```
+
+首先建立了连接，然后sql进行了解析，通过了优化器，优化器认为通过扫描二级索引idx_key1中key1值在(70, +∞)这个区间中的二级索引记录的成本更小。
+
+- server层先让InnoDB去查在key1值在(70, +无穷)区间中的第一条记录。
+- InnoDB通过二级索引idx_key1对应的B+树，从B+树根页面一层一层向下定位，快速找到(70, +无穷)区间的第一条二级索引记录，然后根据该二级索引记录进行回表操作，找到完整的聚簇索引记录，然后返回给server层。
+- server层判断InnoDB返回的记录符不符合搜索条件key1 > 70 AND common_field != 'a'，如果不符合的话就跳过该记录，否则将其发送到客户端。
+- 然后server层向InnoDB要下一条记录。
+- InnoDB根据上一次找到的二级索引记录的next_record属性，获取到下一条二级索引记录，回表后将完整的聚簇索引记录返回给server层。
+- server继续判断，不符合搜索条件即跳过该记录，否则发送到客户端。
+- 一直循环上述过程，直到InnoDB找不到下一条记录，则向server层报告查询完毕。
+- server层收到InnoDB报告的查询完毕请求，停止查询。
+
+下面我们看一下源码中的调用栈
+
+
+![](/img/mysqlinvoke.awebp)
+
+其中的`handler::ha_index_next`便是server层向存储引擎要下一条记录的接口。
+
+其中的`row_search_mvcc`是读取一条记录最重要的函数，这个函数长的吓人，有一千多行：
+
+![](/img/invokemvcc.awebp)
+
+每读取一条记录，都要做非常多的工作，诸如进行多版本的可见性判断，要不要对记录进行加锁的判断，要是加锁的话加什么锁的选择，完成记录从InnoDB的存储格式到server层存储格式的转换等等等等十分繁杂的工作。
+
+
+## 参考
+
+[MySQL的COUNT语句是怎么执行的](https://juejin.cn/post/7021068351023611917)
+
+[MySQL 优化器原来是这样工作的](https://zhuanlan.zhihu.com/p/192707721)
+
+[MySQL一条SQL的执行过程详解](https://www.pdai.tech/md/db/sql-mysql/sql-mysql-execute.html)
 
 # MySQL limit的问题和优化方案
 
-(MySQL的LIMIT这么差劲的吗)[https://juejin.cn/post/7018170284687491080]
+在使用MySQL进行分页查询的时候，我们经常会使用到`limit`关键字。
+但是`limit`在大数据量情况下会有很大的性能问题。
+
+比如
+```sql
+# 取100w后的10条
+select * from table where xxx limit 100000,10;
+```
+这个SQL在mysql的中的执行情况是，<span style="color: red;">mysql会根据查询条件，查出前100w条，然后丢弃，然后再取后面的10条数据。</span>
+
+这样效率就有点低了，为了10条数据，却要查出来100w条数据，然后丢弃。
+
+
+## 优化
+
+对于这种情况优化的方式就是，尽量查出那10条记录的id，然后通过等值查询，去直接查询那10条记录。
+
+```sql
+
+select t.* from table t,
+	(select id from table where xxx  limit 1000000,10) as b  
+where t.id = b.id;
+
+```
+
+虽然在查询中，还是需要抛弃掉前100w条记录，但是这里因为我们只查询了id，所以这100w条并不需要回表了，通过二级索引就能获取，然后后面通过查询出来的10个主键，再去回表查询那10条记录。
+
+
+
+## 参考
+
+[MySQL的LIMIT这么差劲的吗](https://juejin.cn/post/7018170284687491080)
+
+# MySQL Redo Log
+
+
 
 
 # 如何向MySQL中插入大量数据
 
 拼接大SQL 和 小SQL的对比
 
-(10万条数据批量插入，到底怎么做才快？)[https://juejin.cn/post/7025876113943445518?utm_source=gold_browser_extension]
+## 参考
+
+[10万条数据批量插入，到底怎么做才快？](https://juejin.cn/post/7025876113943445518?utm_source=gold_browser_extension)
+
+
+# MySQL字符集引起的全表扫描
+
+
+
 
 # MySQL中的一些限制
 
@@ -82,6 +207,8 @@ B+树因为所有的数据都在叶子节点中存储，所以查询效率和位
 - 单个联合索引使用字段数
 	16个
 
-(InnoDB表的限制)[https://zhuanlan.zhihu.com/p/79987871]
+## 参考
+
+[InnoDB表的限制](https://zhuanlan.zhihu.com/p/79987871)
 
 

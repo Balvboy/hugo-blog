@@ -2,13 +2,13 @@
 title: "VPS搭建步骤"
 date: 2021-11-29T10:42:21+08:00
 tags:
-	- vps
+    - vps
 draft: true
 ---
 
 # VPS搭建步骤
 
-```
+```shell
 # 切换到root用户
 sudo -i 
 
@@ -24,10 +24,6 @@ systemctl stop firewalld
 systemctl status firewalld
 
 # 放开云服务器的端口限制，不同的云平台配置不同
-
-
-
-
 
 ```
 
