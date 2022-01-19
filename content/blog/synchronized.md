@@ -484,6 +484,7 @@ BiasedLocking::Condition BiasedLocking::revoke_and_rebias(Handle obj, bool attem
 
 JVM通过这个方法来进行偏向撤销的决策。
 先说一下这个决策的数据依据。
+
 - 每个锁对象，发生一次偏向撤销，都会在这个锁对象所属的Class中记录下来，称谓偏向撤销次数
 - 每当发生了批量撤销，也会记录下来最近一次发生的时间。
 - 用户设置的批量重偏向阈值和批量撤销阈值，新一次批量重偏向延迟时间
@@ -1024,6 +1025,7 @@ intptr_t ObjectSynchronizer::FastHashCode(Thread * Self, oop obj) {
 >其实这里我也一直有一个疑问，就是在很多情况下，直接重偏向应该是一个更好的选择，那为什么每次都要先进行偏向撤销？
 
 我自己考虑可能会有两个方面的原因
+
 1. 首先重偏向的操作不能影响正在持有锁的线程。因为单单只根据对象头无法得知持有偏向锁线程的状态。所以正常的偏向只能发生在从匿名偏向到偏向的这个过程。而重偏向也只有在安全点中，也就是能够确认线程已经执行完同步代码的情况下才能发生（也就是 revoke_bias中最下面的那段逻辑）
 2. 另一个原因就是，既然会有锁升级，那就表示每个阶段的锁都有最适合自己的场景。既然已经有了多个线程尝试获取锁，那么就说明在一定程度上已经到了不适合偏向锁的场景了，如果强行使用偏向锁，那么就会无法利用到偏向锁的优势，反而造成锁性能下降。
 
@@ -1157,10 +1159,10 @@ CASE(_monitorexit): {
 
 ```
 
-1、循环遍历当前线程的线程栈，找到指向当前锁对象的Lock Record.
-2、将Lock Record的obj设置为空，也就是不再让Lock Record指向锁对象。（这个动作偏向锁也会有）
-3、判断如果是轻量级锁，然后判断如果Lock Record的Displaced header不为空，则通过CAS将Displaced header中的markoop替换回对象头中。前面讲轻量级锁获取的时候也有提到过，如果是轻量级锁重入，则Lock Record的Displaced header设置为空，这里退出的时候，会判断如果不为空则替换。
-4、如果替换成功，则释放锁成功。如果替换失败，则说明当前锁被其他线程抢占过，所已经升级到了重量级。所以要执行InterpreterRuntime::monitorexit的退出逻辑，monitorexit中，主要做的是轻量级锁的退出和锁膨胀为重量级锁。
+1. 循环遍历当前线程的线程栈，找到指向当前锁对象的Lock Record.
+2. 将Lock Record的obj设置为空，也就是不再让Lock Record指向锁对象。（这个动作偏向锁也会有）
+3. 判断如果是轻量级锁，然后判断如果Lock Record的Displaced header不为空，则通过CAS将Displaced header中的markoop替换回对象头中。前面讲轻量级锁获取的时候也有提到过，如果是轻量级锁重入，则Lock Record的Displaced header设置为空，这里退出的时候，会判断如果不为空则替换。
+4. 如果替换成功，则释放锁成功。如果替换失败，则说明当前锁被其他线程抢占过，所已经升级到了重量级。所以要执行InterpreterRuntime::monitorexit的退出逻辑，monitorexit中，主要做的是轻量级锁的退出和锁膨胀为重量级锁。
 
 
 ```c++
