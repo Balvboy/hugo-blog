@@ -7,6 +7,6 @@ draft: true
 ## 查看systemctl错误日志
 
 ```
-journalctl -xefu 服务名
+journalctl -xefu 服务
 
 ```
